@@ -21,6 +21,10 @@ name = "lattice"
 harness = false
 
 [[bench]]
+name = "hashing"
+harness = false
+
+[[bench]]
 name = "keccak"
 harness = false
 
