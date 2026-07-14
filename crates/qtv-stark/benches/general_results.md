@@ -14,9 +14,9 @@ composition is tested over 32768 points, and the query count is 32.
 
 ## Measured timings
 
-Proving time per proof is about 187 milliseconds.
+Proving time per proof is about 113 milliseconds.
 
-Verification time per proof is about 7 milliseconds.
+Verification time per proof is about 5 milliseconds.
 
 The serialized proof is about 318176 bytes.
 
