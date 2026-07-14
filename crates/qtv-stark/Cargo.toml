@@ -15,3 +15,7 @@ harness = false
 [[bench]]
 name = "general"
 harness = false
+
+[[bench]]
+name = "lattice"
+harness = false
