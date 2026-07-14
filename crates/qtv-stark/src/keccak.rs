@@ -335,7 +335,15 @@ pub fn keccak_trace(input: &[u64; LANES]) -> KeccakInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stark::{prove, verify, StarkParams};
     use qtv_crypto::sha3::{sha3_256, shake256};
+
+    fn params() -> StarkParams {
+        StarkParams {
+            lde_blowup: 32,
+            num_queries: 24,
+        }
+    }
 
     // The twenty four standard round constants from the crypto crate table.
     const REFERENCE_RC: [u64; 24] = [
@@ -495,6 +503,26 @@ mod tests {
         wrong[0] ^= 1;
         let air = keccak_air(&input, &wrong);
         assert!(!air.is_satisfied(&instance.trace));
+    }
+
+    #[test]
+    fn the_permutation_proves_and_verifies() {
+        let input = sample_input();
+        let instance = keccak_trace(&input);
+        let proof = prove(&instance.air, &instance.trace, &params());
+        let air = keccak_air(&input, &instance.output);
+        assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_proof_for_the_wrong_output_is_rejected() {
+        let input = sample_input();
+        let instance = keccak_trace(&input);
+        let proof = prove(&instance.air, &instance.trace, &params());
+        let mut wrong = instance.output;
+        wrong[7] ^= 1 << 20;
+        let air = keccak_air(&input, &wrong);
+        assert!(!verify(&air, &params(), &proof));
     }
 
     #[test]
