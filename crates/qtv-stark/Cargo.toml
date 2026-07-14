@@ -17,6 +17,10 @@ name = "batch"
 harness = false
 
 [[bench]]
+name = "certificate"
+harness = false
+
+[[bench]]
 name = "general"
 harness = false
 
