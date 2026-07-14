@@ -12,12 +12,14 @@
 //! coefficients to the two pieces could not close the running product.
 //!
 //! What is joined here is the per coefficient field arithmetic of the relation.
-//! What remains proved separately, and why, is stated honestly in the batch
-//! benchmark: the full radix two transform keeps its own butterfly network layout
-//! and its own permutation wiring, so it does not share this per row band; and the
-//! two hashing steps keep the sponge layout of row chained permutations, which is
-//! a different trace shape and length, and their rejection sampling and multi
-//! block absorb are not yet arithmetized.
+//! The hashing is joined with the arithmetic under one proof by the fused
+//! certificate module, which carries a SHAKE256 band next to the per coefficient
+//! band and binds the hash output to the coefficient the arithmetic consumes. The
+//! remaining sampling steps of the relation are arithmetized in their own modules,
+//! the matrix rejection sampling, the challenge ball sampling, the multi block
+//! absorb, and the commitment and index encodings. The full radix two transform
+//! keeps its own butterfly network layout and its own permutation wiring, so it
+//! does not share this per row band.
 
 use crate::air::{Air, TraceTable};
 use crate::lattice::Q;

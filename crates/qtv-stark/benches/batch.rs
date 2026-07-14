@@ -113,11 +113,13 @@ fn main() {
     println!("permutation join: the decomposition and the hint recovery share the commitment");
     println!("coefficient multiset, bound by the running product argument");
     println!();
-    println!("proved separately, not yet in this trace:");
+    println!("the hashing joins the arithmetic under one proof in the fused certificate bench,");
+    println!("which binds a SHAKE256 squeeze word to the coefficient the arithmetic consumes;");
+    println!("the matrix rejection sampling, the challenge ball sampling, the multi block");
+    println!("absorb, and the commitment and index encodings are arithmetized in their modules");
+    println!();
+    println!("proved separately, not in this per row band:");
     println!("  the full radix two transform keeps its butterfly network layout and its own");
     println!("  permutation wiring, so it does not share the per row band; its modular");
     println!("  multiplication core is the band joined here");
-    println!("  the two hashing steps keep the sponge layout of row chained permutations, a");
-    println!("  different trace shape and length; their rejection sampling to coefficients and");
-    println!("  their multi block absorb are not yet arithmetized");
 }
