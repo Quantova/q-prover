@@ -540,4 +540,55 @@ mod tests {
         let proof = prove(&air, &trace, &params());
         assert!(verify(&air, &params(), &proof));
     }
+
+    // A base trace whose second column is a stated reordering of the first,
+    // under one permutation argument.
+    fn permutation(length: usize, reorder: impl Fn(usize) -> usize) -> (Air, TraceTable) {
+        let mut air = Air::new(2, length);
+        let gamma = air.add_challenge();
+        air.add_permutation(
+            1,
+            move |row, ch| ch[gamma].sub(row[0]),
+            move |row, ch| ch[gamma].sub(row[1]),
+        );
+        let mut trace = TraceTable::new(2, length);
+        let source: Vec<Felt> = (0..length)
+            .map(|i| Felt::new((i as u64).wrapping_mul(0x9e37_79b9) + 3))
+            .collect();
+        for row in 0..length {
+            trace.set(0, row, source[row]);
+            trace.set(1, row, source[reorder(row)]);
+        }
+        (air, trace)
+    }
+
+    #[test]
+    fn a_permutation_trace_proves_and_verifies() {
+        let length = 16;
+        let (air, trace) = permutation(length, |i| (i * 7 + 5) % 16);
+        let proof = prove(&air, &trace, &params());
+        assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_broken_permutation_is_rejected() {
+        let length = 16;
+        let (air, mut trace) = permutation(length, |i| (i * 7 + 5) % 16);
+        // Overwrite one consumed cell with a value outside the source multiset.
+        trace.set(1, 4, trace.get(1, 4).add(Felt::ONE));
+        let proof = prove(&air, &trace, &params());
+        assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_tampered_auxiliary_opening_is_rejected() {
+        let length = 16;
+        let (air, trace) = permutation(length, |i| (i * 3 + 1) % 16);
+        let mut proof = prove(&air, &trace, &params());
+        // Corrupt the running product cell in the first opened row.
+        let last = proof.openings[0].rows[0].values.len() - 1;
+        let cell = proof.openings[0].rows[0].values[last];
+        proof.openings[0].rows[0].values[last] = cell.add(Felt::ONE);
+        assert!(!verify(&air, &params(), &proof));
+    }
 }
