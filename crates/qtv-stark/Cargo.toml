@@ -41,6 +41,10 @@ name = "ntt"
 harness = false
 
 [[bench]]
+name = "sampling"
+harness = false
+
+[[bench]]
 name = "sponge"
 harness = false
 
