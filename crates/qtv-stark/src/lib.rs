@@ -8,6 +8,7 @@ pub mod air;
 pub mod batch;
 pub mod challenge_ball;
 pub mod decompose;
+pub mod encode;
 pub mod examples;
 pub mod field;
 pub mod fri;
