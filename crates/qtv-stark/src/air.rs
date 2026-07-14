@@ -202,6 +202,21 @@ impl Air {
         });
     }
 
+    /// Adds a constraint that relates the current row to the next row and holds
+    /// on every row, including the last row whose next row wraps around the
+    /// domain. This is the form a periodic column recurrence needs.
+    pub fn add_wrap_transition<F>(&mut self, degree: usize, rule: F)
+    where
+        F: Fn(&[Felt], &[Felt]) -> Felt + Sync + 'static,
+    {
+        self.transitions.push(Transition {
+            degree,
+            exclude_last: false,
+            uses_challenges: false,
+            rule: Box::new(move |current, next, _challenges| rule(current, next)),
+        });
+    }
+
     /// Pins the cell at the column and row to the value.
     pub fn add_boundary(&mut self, column: usize, row: usize, value: Felt) {
         self.boundaries.push(Boundary { column, row, value });
@@ -328,6 +343,9 @@ impl Air {
             }
         }
         for boundary in &self.boundaries {
+            if boundary.column >= self.base_width {
+                continue;
+            }
             if trace.get(boundary.column, boundary.row) != boundary.value {
                 return false;
             }
