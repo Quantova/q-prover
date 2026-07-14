@@ -6,6 +6,7 @@ pub mod examples;
 pub mod field;
 pub mod fri;
 pub mod hint;
+pub mod keccak;
 pub mod lattice;
 pub mod merkle;
 pub mod norm;
