@@ -13,6 +13,10 @@ name = "backend"
 harness = false
 
 [[bench]]
+name = "batch"
+harness = false
+
+[[bench]]
 name = "general"
 harness = false
 
