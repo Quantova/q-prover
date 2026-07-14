@@ -16,12 +16,15 @@ pub const NORM_BOUND: u64 = GAMMA1 - BETA;
 /// The bit width that covers the bound.
 pub const NORM_BITS: usize = 20;
 
-const COL_Z: usize = 0;
+/// The input response coefficient column, relative to the piece base.
+pub const COL_Z: usize = 0;
 const COL_SIGN: usize = 1;
 const COL_MAG: usize = 2;
 const COL_MAG_BITS: usize = 3;
 const COL_MAG_SLACK: usize = COL_MAG_BITS + NORM_BITS;
-const WIDTH: usize = COL_MAG_SLACK + NORM_BITS;
+
+/// The column width of the norm check piece.
+pub const WIDTH: usize = COL_MAG_SLACK + NORM_BITS;
 
 fn recompose(row: &[Felt], base: usize) -> Felt {
     let two = Felt::new(2);
@@ -34,51 +37,65 @@ fn recompose(row: &[Felt], base: usize) -> Felt {
     acc
 }
 
-/// Builds the description for a batch of infinity norm checks of the given
-pub fn norm_air(length: usize) -> Air {
-    let mut air = Air::new(WIDTH, length);
+/// Adds the infinity norm constraints at the given column base, so the piece can
+pub fn add_constraints(air: &mut Air, base: usize) {
     let modulus = Felt::new(Q);
     let bound_minus_one = Felt::new(NORM_BOUND - 1);
+    let z = base + COL_Z;
+    let sign = base + COL_SIGN;
+    let mag = base + COL_MAG;
 
     // The centered magnitude is the coefficient when the sign bit is zero and
     // the modulus minus the coefficient when the sign bit is one.
     air.add_single_row(2, move |row| {
-        let mirror = modulus.sub(row[COL_Z].add(row[COL_Z]));
-        row[COL_MAG].sub(row[COL_Z]).sub(row[COL_SIGN].mul(mirror))
+        let mirror = modulus.sub(row[z].add(row[z]));
+        row[mag].sub(row[z]).sub(row[sign].mul(mirror))
     });
 
     // The sign is a bit.
-    air.add_single_row(2, |row| row[COL_SIGN].mul(row[COL_SIGN].sub(Felt::ONE)));
+    air.add_single_row(2, move |row| row[sign].mul(row[sign].sub(Felt::ONE)));
 
     // The magnitude bit expansion recomposes to the magnitude, and the slack
     // expansion recomposes to the bound minus one minus the magnitude, which
     // together force the magnitude below the bound.
-    air.add_single_row(1, |row| recompose(row, COL_MAG_BITS).sub(row[COL_MAG]));
     air.add_single_row(1, move |row| {
-        recompose(row, COL_MAG_SLACK).sub(bound_minus_one.sub(row[COL_MAG]))
+        recompose(row, base + COL_MAG_BITS).sub(row[mag])
+    });
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_MAG_SLACK).sub(bound_minus_one.sub(row[mag]))
     });
 
-    for base in [COL_MAG_BITS, COL_MAG_SLACK] {
+    for start in [COL_MAG_BITS, COL_MAG_SLACK] {
         for k in 0..NORM_BITS {
-            let col = base + k;
+            let col = base + start + k;
             air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
         }
     }
+}
 
+/// Builds the description for a batch of infinity norm checks of the given
+pub fn norm_air(length: usize) -> Air {
+    let mut air = Air::new(WIDTH, length);
+    add_constraints(&mut air, 0);
     air
 }
 
-fn fill_row(trace: &mut TraceTable, row: usize, z: u64) {
+/// Fills one infinity norm check row at the given column base.
+pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, z: u64) {
     let (sign, magnitude) = if z <= Q / 2 { (0u64, z) } else { (1u64, Q - z) };
-    trace.set(COL_Z, row, Felt::new(z));
-    trace.set(COL_SIGN, row, Felt::new(sign));
-    trace.set(COL_MAG, row, Felt::new(magnitude));
+    trace.set(base + COL_Z, row, Felt::new(z));
+    trace.set(base + COL_SIGN, row, Felt::new(sign));
+    trace.set(base + COL_MAG, row, Felt::new(magnitude));
     // A coefficient outside the bound has no honest witness. The wrapping keeps
     // the fill total so the range constraints reject it rather than panicking.
     let slack = (NORM_BOUND - 1).wrapping_sub(magnitude);
     for k in 0..NORM_BITS {
-        trace.set(COL_MAG_BITS + k, row, Felt::new((magnitude >> k) & 1));
-        trace.set(COL_MAG_SLACK + k, row, Felt::new((slack >> k) & 1));
+        trace.set(
+            base + COL_MAG_BITS + k,
+            row,
+            Felt::new((magnitude >> k) & 1),
+        );
+        trace.set(base + COL_MAG_SLACK + k, row, Felt::new((slack >> k) & 1));
     }
 }
 
@@ -103,7 +120,7 @@ pub fn norm_batch(coefficients: &[u64]) -> NormBatch {
         } else {
             0
         };
-        fill_row(&mut trace, row, z);
+        fill_row(&mut trace, 0, row, z);
     }
     NormBatch {
         air: norm_air(length),

@@ -37,11 +37,15 @@ pub fn signature_batch_workload(signatures: usize, seed: u64) -> Vec<(u64, u64)>
 
 const COL_A: usize = 0;
 const COL_B: usize = 1;
-const COL_R: usize = 2;
+
+/// The product residue column, relative to the piece base.
+pub const COL_R: usize = 2;
 const COL_QUO: usize = 3;
 const COL_R_BITS: usize = 4;
 const COL_S_BITS: usize = COL_R_BITS + RESIDUE_BITS;
-const WIDTH: usize = COL_S_BITS + RESIDUE_BITS;
+
+/// The column width of the modular multiplication piece.
+pub const WIDTH: usize = COL_S_BITS + RESIDUE_BITS;
 
 fn recompose(row: &[Felt], base: usize) -> Felt {
     let two = Felt::new(2);
@@ -54,55 +58,61 @@ fn recompose(row: &[Felt], base: usize) -> Felt {
     acc
 }
 
-/// Builds the description for a batch of modular multiplications of the given
-pub fn modmul_air(length: usize) -> Air {
-    let mut air = Air::new(WIDTH, length);
+/// Adds the modular multiplication constraints at the given column base, so the
+pub fn add_constraints(air: &mut Air, base: usize) {
     let modulus = Felt::new(Q);
     let modulus_minus_one = Felt::new(Q - 1);
+    let a = base + COL_A;
+    let b = base + COL_B;
+    let r = base + COL_R;
+    let quo = base + COL_QUO;
 
     // r equals a times b minus the quotient times the modulus.
     air.add_single_row(2, move |row| {
-        row[COL_A]
-            .mul(row[COL_B])
-            .sub(row[COL_QUO].mul(modulus))
-            .sub(row[COL_R])
+        row[a].mul(row[b]).sub(row[quo].mul(modulus)).sub(row[r])
     });
 
     // The bit expansion of r recomposes to r.
-    air.add_single_row(1, |row| recompose(row, COL_R_BITS).sub(row[COL_R]));
+    air.add_single_row(1, move |row| recompose(row, base + COL_R_BITS).sub(row[r]));
 
     // The bit expansion of q minus one minus r recomposes to that value, which
     // together with the previous expansion forces r into zero to q minus one.
     air.add_single_row(1, move |row| {
-        recompose(row, COL_S_BITS).sub(modulus_minus_one.sub(row[COL_R]))
+        recompose(row, base + COL_S_BITS).sub(modulus_minus_one.sub(row[r]))
     });
 
     // Every bit is zero or one.
     for k in 0..RESIDUE_BITS {
-        let col = COL_R_BITS + k;
+        let col = base + COL_R_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
     }
     for k in 0..RESIDUE_BITS {
-        let col = COL_S_BITS + k;
+        let col = base + COL_S_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
     }
+}
 
+/// Builds the description for a batch of modular multiplications of the given
+pub fn modmul_air(length: usize) -> Air {
+    let mut air = Air::new(WIDTH, length);
+    add_constraints(&mut air, 0);
     air
 }
 
-fn fill_row(trace: &mut TraceTable, row: usize, a: u64, b: u64) {
+/// Fills one modular multiplication row at the given column base.
+pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, a: u64, b: u64) {
     let product = (a as u128) * (b as u128);
     let quotient = (product / Q as u128) as u64;
     let residue = (product % Q as u128) as u64;
     let slack = Q - 1 - residue;
 
-    trace.set(COL_A, row, Felt::new(a));
-    trace.set(COL_B, row, Felt::new(b));
-    trace.set(COL_R, row, Felt::new(residue));
-    trace.set(COL_QUO, row, Felt::new(quotient));
+    trace.set(base + COL_A, row, Felt::new(a));
+    trace.set(base + COL_B, row, Felt::new(b));
+    trace.set(base + COL_R, row, Felt::new(residue));
+    trace.set(base + COL_QUO, row, Felt::new(quotient));
     for k in 0..RESIDUE_BITS {
-        trace.set(COL_R_BITS + k, row, Felt::new((residue >> k) & 1));
-        trace.set(COL_S_BITS + k, row, Felt::new((slack >> k) & 1));
+        trace.set(base + COL_R_BITS + k, row, Felt::new((residue >> k) & 1));
+        trace.set(base + COL_S_BITS + k, row, Felt::new((slack >> k) & 1));
     }
 }
 
@@ -123,7 +133,7 @@ pub fn modmul_batch(inputs: &[(u64, u64)]) -> ModMulBatch {
     let mut trace = TraceTable::new(WIDTH, length);
     for row in 0..length {
         let (a, b) = if row < count { inputs[row] } else { (0, 0) };
-        fill_row(&mut trace, row, a % Q, b % Q);
+        fill_row(&mut trace, 0, row, a % Q, b % Q);
     }
     ModMulBatch {
         air: modmul_air(length),
@@ -205,7 +215,7 @@ mod tests {
         let length = 2;
         let mut trace = TraceTable::new(WIDTH, length);
         for row in 0..length {
-            fill_row(&mut trace, row, a, b);
+            fill_row(&mut trace, 0, row, a, b);
         }
         // Row zero true residue is 15. Replace it with 15 plus q and drop the
         // quotient by one, which keeps a times b but leaves the range.
