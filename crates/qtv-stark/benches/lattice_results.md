@@ -1,4 +1,4 @@
-# Batch machine lattice verification results
+# Batch module lattice verification results
 
 These numbers come from the lattice benchmark in this directory. Run it with
 cargo bench and it prints the same fields to standard output. The machine is an
@@ -6,7 +6,7 @@ Apple Silicon host and the build uses the release profile.
 
 ## What the batch proves
 
-The machine lattice signature verifies through the number theoretic transform
+The module lattice signature verifies through the number theoretic transform
 and modular arithmetic over the signature modulus 8380417. The atomic step of
 both the transform twiddle products and the pointwise products of the matrix
 vector product is a modular multiplication over that modulus. The benchmark

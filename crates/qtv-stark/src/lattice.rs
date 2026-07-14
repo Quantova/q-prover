@@ -1,6 +1,6 @@
-//! Batch verification core for the machine lattice signature.
+//! Batch verification core for the module lattice signature.
 //!
-//! The machine lattice signature verifies through the number theoretic
+//! The module lattice signature verifies through the number theoretic
 //! transform and modular arithmetic over the signature modulus. The atomic step
 //! of both the transform twiddle products and the pointwise products in the
 //! matrix vector product is a modular multiplication over that modulus. This

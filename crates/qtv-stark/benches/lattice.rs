@@ -1,4 +1,4 @@
-//! Benchmark for the batch machine lattice verification core.
+//! Benchmark for the batch module lattice verification core.
 //!
 //! It builds the modular multiplication workload of the transform domain matrix
 //! vector product for a batch of signatures, proves the batch, and reports
