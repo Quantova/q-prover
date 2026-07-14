@@ -12,6 +12,29 @@ pub const RING_DEGREE: usize = 256;
 /// The bit width of a residue below the modulus.
 pub const RESIDUE_BITS: usize = 23;
 
+/// The row count of the public matrix in the verification relation.
+pub const MATRIX_ROWS: usize = 6;
+
+/// The column count of the public matrix in the verification relation.
+pub const MATRIX_COLS: usize = 5;
+
+/// The count of coordinatewise modular multiplications in the transform domain
+pub const PRODUCTS_PER_SIGNATURE: usize = MATRIX_ROWS * MATRIX_COLS * RING_DEGREE;
+
+/// Produces the modular multiplication workload for a batch of signatures. Each
+pub fn signature_batch_workload(signatures: usize, seed: u64) -> Vec<(u64, u64)> {
+    let mut state = seed | 1;
+    let mut draw = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state % Q
+    };
+    (0..signatures * PRODUCTS_PER_SIGNATURE)
+        .map(|_| (draw(), draw()))
+        .collect()
+}
+
 const COL_A: usize = 0;
 const COL_B: usize = 1;
 const COL_R: usize = 2;
@@ -135,6 +158,16 @@ mod tests {
             assert!(r < Q);
         }
         assert!(batch.air.is_satisfied(&batch.trace));
+    }
+
+    #[test]
+    fn the_signature_workload_has_the_expected_shape() {
+        let workload = signature_batch_workload(2, 0x1234);
+        assert_eq!(workload.len(), 2 * PRODUCTS_PER_SIGNATURE);
+        assert_eq!(PRODUCTS_PER_SIGNATURE, 7680);
+        for (a, b) in &workload {
+            assert!(*a < Q && *b < Q);
+        }
     }
 
     #[test]
