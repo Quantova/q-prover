@@ -23,15 +23,19 @@ pub struct StarkParams {
     pub num_queries: usize,
 }
 
-/// One opened trace row, the cells of every column at one domain index, tied to
-/// the trace commitment by a single authentication path.
+/// One opened trace row, the cells of every column at one domain index. The base
+/// cells are tied to the base commitment and the auxiliary cells to the
+/// auxiliary commitment, each by its own authentication path.
 pub struct RowOpening {
     /// The index of the row in the extended domain.
     pub index: usize,
-    /// The opened cell of each column.
+    /// The opened cell of each column, base columns then auxiliary columns.
     pub values: Vec<Felt>,
-    /// The authentication path of the row leaf.
+    /// The authentication path of the base row leaf.
     pub path: MerkleProof,
+    /// The authentication path of the auxiliary row leaf, empty when there are
+    /// no auxiliary columns.
+    pub aux_path: MerkleProof,
 }
 
 /// The trace openings that back one query, the current and next rows at the two
@@ -44,8 +48,11 @@ pub struct QueryOpening {
 
 /// A proof that a trace satisfies an algebraic description.
 pub struct StarkProof {
-    /// The Merkle root that commits every trace row.
+    /// The Merkle root that commits every base trace row.
     pub trace_root: Digest,
+    /// The Merkle root that commits every auxiliary trace row, all zero when the
+    /// description has no auxiliary columns.
+    pub aux_root: Digest,
     /// The low degree proof over the composition.
     pub fri: FriProof,
     /// The trace openings that tie the composition to the constraints.
@@ -168,34 +175,71 @@ fn composition_value(
     acc
 }
 
-/// Produces a proof that the trace satisfies the description.
-pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof {
-    assert_eq!(trace.width(), air.width(), "trace width mismatch");
-    assert_eq!(trace.length(), air.length(), "trace length mismatch");
-    let domain = Domain::new(air, params);
-
-    let mut column_lde: Vec<Vec<Felt>> = Vec::with_capacity(air.width());
-    for column in 0..air.width() {
+// Interpolates every column of a trace and extends it onto the coset.
+fn column_extensions(trace: &TraceTable, domain: &Domain) -> Vec<Vec<Felt>> {
+    let mut column_lde: Vec<Vec<Felt>> = Vec::with_capacity(trace.width());
+    for column in 0..trace.width() {
         let coeffs = poly::interpolate(trace.column(column));
         let lde = poly::evaluate_coset(&coeffs, domain.log_size, domain.shift);
         column_lde.push(lde);
     }
+    column_lde
+}
 
-    // Commit every extended row under a single leaf so one path opens a whole
-    // row across the columns.
-    let mut row = vec![Felt::ZERO; air.width()];
-    let mut leaves: Vec<Digest> = Vec::with_capacity(domain.size);
-    for i in 0..domain.size {
+// Commits the extended rows of a set of columns under one leaf each, so a single
+// path opens a whole row across those columns.
+fn commit_rows(column_lde: &[Vec<Felt>], size: usize) -> MerkleTree {
+    let width = column_lde.len();
+    let mut row = vec![Felt::ZERO; width];
+    let mut leaves: Vec<Digest> = Vec::with_capacity(size);
+    for i in 0..size {
         for (column, cell) in column_lde.iter().zip(row.iter_mut()) {
             *cell = column[i];
         }
         leaves.push(hash_row(&row));
     }
-    let tree = MerkleTree::commit(&leaves);
-    let trace_root = tree.root();
+    MerkleTree::commit(&leaves)
+}
+
+/// Produces a proof that the base trace satisfies the description. Auxiliary
+/// columns are built from the trace and the challenges that follow the base
+/// commitment, so they are committed under a second root.
+pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof {
+    assert_eq!(trace.width(), air.base_width(), "trace width mismatch");
+    assert_eq!(trace.length(), air.length(), "trace length mismatch");
+    let domain = Domain::new(air, params);
+
+    let base_lde = column_extensions(trace, &domain);
+    let base_tree = commit_rows(&base_lde, domain.size);
+    let trace_root = base_tree.root();
 
     let mut transcript = Transcript::new();
     transcript.absorb_digest(&trace_root);
+    let challenges: Vec<Felt> = (0..air.num_challenges())
+        .map(|_| transcript.challenge_felt())
+        .collect();
+
+    // Build and commit the auxiliary columns once the challenges are fixed.
+    let mut column_lde = base_lde;
+    let mut aux_root = [0u8; 32];
+    let aux_tree = if air.aux_width() > 0 {
+        let aux = air.build_aux(trace, &challenges);
+        let mut aux_table = TraceTable::new(air.aux_width(), air.length());
+        for (column, values) in aux.iter().enumerate() {
+            for (row, value) in values.iter().enumerate() {
+                aux_table.set(column, row, *value);
+            }
+        }
+        let aux_lde = column_extensions(&aux_table, &domain);
+        let tree = commit_rows(&aux_lde, domain.size);
+        aux_root = tree.root();
+        transcript.absorb_digest(&aux_root);
+        column_lde.extend(aux_lde);
+        Some(tree)
+    } else {
+        None
+    };
+
     let num_constraints = air.transitions().len() + air.boundaries().len();
     let weights: Vec<Felt> = (0..num_constraints)
         .map(|_| transcript.challenge_felt())
@@ -237,7 +281,7 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         composition[i] = composition_value(
             air,
             &weights,
-            &[],
+            &challenges,
             point,
             last_point,
             vanishing_inv[i],
@@ -263,10 +307,18 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         let mut rows = Vec::with_capacity(indices.len());
         for &index in &indices {
             let values: Vec<Felt> = column_lde.iter().map(|col| col[index]).collect();
+            let aux_path = match &aux_tree {
+                Some(tree) => tree.open(index),
+                None => MerkleProof {
+                    leaf_index: index,
+                    siblings: Vec::new(),
+                },
+            };
             rows.push(RowOpening {
                 index,
                 values,
-                path: tree.open(index),
+                path: base_tree.open(index),
+                aux_path,
             });
         }
         openings.push(QueryOpening { rows });
@@ -274,6 +326,7 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
 
     StarkProof {
         trace_root,
+        aux_root,
         fri: fri_proof,
         openings,
     }
@@ -287,8 +340,16 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
 /// match the value the low degree test binds at the same position.
 pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
     let domain = Domain::new(air, params);
+    let base_width = air.base_width();
+    let has_aux = air.aux_width() > 0;
     let mut transcript = Transcript::new();
     transcript.absorb_digest(&proof.trace_root);
+    let challenges: Vec<Felt> = (0..air.num_challenges())
+        .map(|_| transcript.challenge_felt())
+        .collect();
+    if has_aux {
+        transcript.absorb_digest(&proof.aux_root);
+    }
     let num_constraints = air.transitions().len() + air.boundaries().len();
     let weights: Vec<Felt> = (0..num_constraints)
         .map(|_| transcript.challenge_felt())
@@ -324,8 +385,24 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
             {
                 return false;
             }
-            if !crate::merkle::verify(&proof.trace_root, &hash_row(&row.values), &row.path) {
+            if !crate::merkle::verify(
+                &proof.trace_root,
+                &hash_row(&row.values[..base_width]),
+                &row.path,
+            ) {
                 return false;
+            }
+            if has_aux {
+                if row.aux_path.leaf_index != index {
+                    return false;
+                }
+                if !crate::merkle::verify(
+                    &proof.aux_root,
+                    &hash_row(&row.values[base_width..]),
+                    &row.aux_path,
+                ) {
+                    return false;
+                }
             }
         }
 
@@ -333,7 +410,7 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
         let recomputed_low = composition_value(
             air,
             &weights,
-            &[],
+            &challenges,
             point_low,
             last_point,
             point_low.pow(domain.n as u64).sub(Felt::ONE).inv(),
@@ -349,7 +426,7 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
         let recomputed_high = composition_value(
             air,
             &weights,
-            &[],
+            &challenges,
             point_high,
             last_point,
             point_high.pow(domain.n as u64).sub(Felt::ONE).inv(),
