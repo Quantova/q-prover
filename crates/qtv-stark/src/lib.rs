@@ -5,6 +5,7 @@
 //! no pairings and no elliptic curve operations anywhere in this crate.
 
 pub mod air;
+pub mod batch;
 pub mod decompose;
 pub mod examples;
 pub mod field;
