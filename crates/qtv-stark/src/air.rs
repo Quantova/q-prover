@@ -5,6 +5,14 @@
 //! table. Transition constraints tie one row to the next, single row
 //! constraints hold within a row, and boundary constraints pin one cell to a
 //! fixed value.
+//!
+//! A permutation argument adds one auxiliary column that carries a running
+//! product. It proves that a per row numerator factor and a per row denominator
+//! factor have the same product over the whole trace, which under a transcript
+//! challenge means one multiset of trace cells is a permutation of another. This
+//! lets a value written in one row be consumed as an input in a distant row.
+
+use std::sync::Arc;
 
 use crate::field::Felt;
 
@@ -87,30 +95,68 @@ pub struct Boundary {
     pub value: Felt,
 }
 
+/// A per row multiplicative factor over the current row and the challenges.
+type Factor = Arc<dyn Fn(&[Felt], &[Felt]) -> Felt + Send + Sync>;
+
+/// A permutation argument backed by one auxiliary running product column.
+///
+/// The running product z starts at one and steps by the numerator factor over
+/// the denominator factor. Enforced with wrap around, this forces the product of
+/// the numerator factors to equal the product of the denominator factors over
+/// the whole trace.
+struct Permutation {
+    /// The per row numerator factor.
+    num_factor: Factor,
+    /// The per row denominator factor.
+    den_factor: Factor,
+}
+
 /// The algebraic description of a computation, made of a shape and its
 /// constraints.
 pub struct Air {
-    width: usize,
+    base_width: usize,
+    aux_width: usize,
     length: usize,
+    num_challenges: usize,
     transitions: Vec<Transition>,
     boundaries: Vec<Boundary>,
+    permutations: Vec<Permutation>,
 }
 
 impl Air {
-    /// Starts an empty description for a trace of the given shape.
+    /// Starts an empty description for a base trace of the given shape. Auxiliary
+    /// columns are appended later by the permutation arguments.
     pub fn new(width: usize, length: usize) -> Self {
         assert!(length.is_power_of_two(), "length must be a power of two");
         Air {
-            width,
+            base_width: width,
+            aux_width: 0,
             length,
+            num_challenges: 0,
             transitions: Vec::new(),
             boundaries: Vec::new(),
+            permutations: Vec::new(),
         }
     }
 
-    /// The trace width the description expects.
+    /// The full trace width, the base columns plus the auxiliary columns.
     pub fn width(&self) -> usize {
-        self.width
+        self.base_width + self.aux_width
+    }
+
+    /// The number of base columns the caller fills before the challenges.
+    pub fn base_width(&self) -> usize {
+        self.base_width
+    }
+
+    /// The number of auxiliary columns the permutation arguments append.
+    pub fn aux_width(&self) -> usize {
+        self.aux_width
+    }
+
+    /// The number of transcript challenges the description draws.
+    pub fn num_challenges(&self) -> usize {
+        self.num_challenges
     }
 
     /// The trace length the description expects.
@@ -161,6 +207,94 @@ impl Air {
         self.boundaries.push(Boundary { column, row, value });
     }
 
+    /// Reserves one transcript challenge and returns its index. Challenges are
+    /// drawn after the base trace is committed, so a factor may depend on them.
+    pub fn add_challenge(&mut self) -> usize {
+        let index = self.num_challenges;
+        self.num_challenges += 1;
+        index
+    }
+
+    /// Adds a permutation argument. The numerator and denominator factors read
+    /// the current base row and the challenges. The argument appends one
+    /// auxiliary column and forces the product of the numerator factors over the
+    /// trace to equal the product of the denominator factors. The degree is the
+    /// algebraic degree of a factor in the trace cells. Every denominator factor
+    /// must be non zero on every row.
+    pub fn add_permutation<N, D>(&mut self, degree: usize, num_factor: N, den_factor: D) -> usize
+    where
+        N: Fn(&[Felt], &[Felt]) -> Felt + Send + Sync + 'static,
+        D: Fn(&[Felt], &[Felt]) -> Felt + Send + Sync + 'static,
+    {
+        let aux_col = self.base_width + self.aux_width;
+        self.aux_width += 1;
+        self.add_boundary(aux_col, 0, Felt::ONE);
+
+        let num: Factor = Arc::new(num_factor);
+        let den: Factor = Arc::new(den_factor);
+        let num_rule = num.clone();
+        let den_rule = den.clone();
+        self.transitions.push(Transition {
+            degree: degree + 1,
+            exclude_last: false,
+            uses_challenges: true,
+            rule: Box::new(move |current, next, challenges| {
+                let numerator = current[aux_col].mul(num_rule(current, challenges));
+                let denominator = next[aux_col].mul(den_rule(current, challenges));
+                denominator.sub(numerator)
+            }),
+        });
+        self.permutations.push(Permutation {
+            num_factor: num,
+            den_factor: den,
+        });
+        aux_col
+    }
+
+    /// Builds the auxiliary running product columns from a base trace and the
+    /// challenges. This is the fill the prover commits and the reference check
+    /// replays.
+    pub fn build_aux(&self, base: &TraceTable, challenges: &[Felt]) -> Vec<Vec<Felt>> {
+        let n = self.length;
+        let mut columns = Vec::with_capacity(self.permutations.len());
+        for permutation in &self.permutations {
+            let mut numerators = Vec::with_capacity(n);
+            let mut denominators = Vec::with_capacity(n);
+            for row in 0..n {
+                let current = base.row(row);
+                numerators.push((permutation.num_factor)(&current, challenges));
+                denominators.push((permutation.den_factor)(&current, challenges));
+            }
+            let denominator_inv = crate::poly::batch_inverse(&denominators);
+            let mut column = vec![Felt::ONE; n];
+            let mut running = Felt::ONE;
+            for row in 0..n - 1 {
+                running = running.mul(numerators[row]).mul(denominator_inv[row]);
+                column[row + 1] = running;
+            }
+            columns.push(column);
+        }
+        columns
+    }
+
+    /// Assembles the full trace by appending the auxiliary columns to the base
+    /// trace under the given challenges.
+    pub fn assemble(&self, base: &TraceTable, challenges: &[Felt]) -> TraceTable {
+        let aux = self.build_aux(base, challenges);
+        let mut full = TraceTable::new(self.width().max(1), self.length);
+        for column in 0..self.base_width {
+            for row in 0..self.length {
+                full.set(column, row, base.get(column, row));
+            }
+        }
+        for (offset, column) in aux.iter().enumerate() {
+            for row in 0..self.length {
+                full.set(self.base_width + offset, row, column[row]);
+            }
+        }
+        full
+    }
+
     /// The largest algebraic degree among the transition constraints, never
     /// below one.
     pub fn max_degree(&self) -> usize {
@@ -189,6 +323,38 @@ impl Air {
                     continue;
                 }
                 if (constraint.rule)(&current, &next, &[]) != Felt::ZERO {
+                    return false;
+                }
+            }
+        }
+        for boundary in &self.boundaries {
+            if trace.get(boundary.column, boundary.row) != boundary.value {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Checks a base trace against every constraint under the given challenges.
+    /// It builds the auxiliary columns first, so it covers the permutation
+    /// arguments that the challenge free check skips.
+    pub fn is_satisfied_with(&self, base: &TraceTable, challenges: &[Felt]) -> bool {
+        assert_eq!(base.width(), self.base_width, "base trace width mismatch");
+        assert_eq!(
+            challenges.len(),
+            self.num_challenges,
+            "challenge count mismatch"
+        );
+        let trace = self.assemble(base, challenges);
+        let n = self.length;
+        for row in 0..n {
+            let current = trace.row(row);
+            let next = trace.row((row + 1) % n);
+            for constraint in &self.transitions {
+                if constraint.exclude_last && row == n - 1 {
+                    continue;
+                }
+                if (constraint.rule)(&current, &next, challenges) != Felt::ZERO {
                     return false;
                 }
             }
@@ -279,5 +445,66 @@ mod tests {
         assert!(air.is_satisfied(&trace));
         trace.set(1, length - 1, Felt::ZERO);
         assert!(!air.is_satisfied(&trace));
+    }
+
+    // A description with one permutation argument over two columns, proving the
+    // second column is a reordering of the first.
+    fn permutation_air() -> Air {
+        let mut air = Air::new(2, 8);
+        let gamma = air.add_challenge();
+        air.add_permutation(
+            1,
+            move |row, ch| ch[gamma].sub(row[0]),
+            move |row, ch| ch[gamma].sub(row[1]),
+        );
+        air
+    }
+
+    #[test]
+    fn a_reordering_is_a_permutation() {
+        let air = permutation_air();
+        let source = [3u64, 1, 4, 1, 5, 9, 2, 6];
+        let shuffled = [6u64, 5, 4, 3, 2, 1, 1, 9];
+        let mut base = TraceTable::new(2, 8);
+        for row in 0..8 {
+            base.set(0, row, Felt::new(source[row]));
+            base.set(1, row, Felt::new(shuffled[row]));
+        }
+        let challenges = [Felt::new(0x1234_5678_9abc)];
+        assert_eq!(air.num_challenges(), 1);
+        assert_eq!(air.aux_width(), 1);
+        assert!(air.is_satisfied_with(&base, &challenges));
+    }
+
+    #[test]
+    fn a_mismatched_multiset_is_rejected() {
+        let air = permutation_air();
+        let source = [3u64, 1, 4, 1, 5, 9, 2, 6];
+        // The second column drops the nine for another six, so the multisets
+        // differ and the running product cannot close.
+        let shuffled = [6u64, 5, 4, 3, 2, 1, 1, 6];
+        let mut base = TraceTable::new(2, 8);
+        for row in 0..8 {
+            base.set(0, row, Felt::new(source[row]));
+            base.set(1, row, Felt::new(shuffled[row]));
+        }
+        let challenges = [Felt::new(0x1234_5678_9abc)];
+        assert!(!air.is_satisfied_with(&base, &challenges));
+    }
+
+    #[test]
+    fn the_running_product_column_closes_to_one() {
+        let air = permutation_air();
+        let values = [7u64, 2, 7, 2, 7, 2, 7, 2];
+        let mut base = TraceTable::new(2, 8);
+        for row in 0..8 {
+            base.set(0, row, Felt::new(values[row]));
+            base.set(1, row, Felt::new(values[7 - row]));
+        }
+        let challenges = [Felt::new(0x9e37_79b9_7f4a)];
+        let aux = air.build_aux(&base, &challenges);
+        assert_eq!(aux.len(), 1);
+        assert_eq!(aux[0][0], Felt::ONE);
+        assert!(air.is_satisfied_with(&base, &challenges));
     }
 }
