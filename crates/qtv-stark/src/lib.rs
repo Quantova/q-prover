@@ -6,6 +6,7 @@
 
 pub mod air;
 pub mod batch;
+pub mod certificate;
 pub mod challenge_ball;
 pub mod decompose;
 pub mod encode;

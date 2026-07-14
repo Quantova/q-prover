@@ -1,0 +1,278 @@
+//! The fused certificate over the hashing and the per coefficient arithmetic.
+//!
+//! One flat trace carries two bands. The hashing band is a SHAKE256 sponge that
+//! squeezes one word per segment, the matrix expansion of the verify relation. The
+//! arithmetic band reduces each squeeze word into a coefficient below the modulus
+//! and runs the commitment decomposition and the hint recovery over it, the per
+//! coefficient certificate. A single proof over the joined trace is one certificate
+//! for the hashing and the arithmetic together.
+//!
+//! The bands are bound so a prover cannot split them. On each squeeze row a gated
+//! equality pins the reduction input to the sponge squeeze word, so the coefficient
+//! the arithmetic consumes is exactly the word the hash produced. The permutation
+//! argument then binds the reduced coefficient to the decomposition and the hint
+//! recovery, so the same value flows through both pieces. The squeeze word is
+//! reduced modulo the signature modulus, a representative map from the hash output
+//! into the field; the faithful rejection sampling of the matrix expansion is
+//! arithmetized in the sample module and binds the same way.
+
+use crate::air::{Air, TraceTable};
+use crate::field::Felt;
+use crate::lattice::{Q, RESIDUE_BITS};
+use crate::sponge::{lane_low_col, squeeze_row, SHAKE256_RATE, SPONGE_WIDTH};
+use crate::{decompose, hint, sponge};
+
+const QUO_BITS: usize = 10;
+
+const SQ_COL: usize = SPONGE_WIDTH;
+const REDUCE_BASE: usize = SQ_COL + 1;
+const R_V: usize = REDUCE_BASE;
+const R_R: usize = REDUCE_BASE + 1;
+const R_QUO: usize = REDUCE_BASE + 2;
+const R_QUO_BITS: usize = REDUCE_BASE + 3;
+const R_R_BITS: usize = R_QUO_BITS + QUO_BITS;
+const R_SLACK_BITS: usize = R_R_BITS + RESIDUE_BITS;
+const REDUCE_WIDTH: usize = 3 + QUO_BITS + 2 * RESIDUE_BITS;
+
+/// The column base of the commitment decomposition band.
+pub const DECOMPOSE_BASE: usize = REDUCE_BASE + REDUCE_WIDTH;
+/// The column base of the hint recovery band.
+pub const HINT_BASE: usize = DECOMPOSE_BASE + decompose::WIDTH;
+/// The full base column width of the fused certificate.
+pub const CERT_WIDTH: usize = HINT_BASE + hint::WIDTH;
+
+fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
+    let two = Felt::new(2);
+    let mut acc = Felt::ZERO;
+    let mut weight = Felt::ONE;
+    for k in 0..bits {
+        acc = acc.add(row[base + k].mul(weight));
+        weight = weight.mul(two);
+    }
+    acc
+}
+
+/// Builds the fused description over a public message hashed for the given number
+/// of segments and the public squeeze output. The arithmetic band reduces one
+/// squeeze word per segment and decomposes it, and the permutation argument binds
+/// the reduced coefficient to the two per coefficient pieces.
+pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
+    let rows = perms * sponge::SEGMENT_ROWS;
+    let mut air = Air::new(CERT_WIDTH, rows);
+
+    // The hashing band, the SHAKE256 squeeze.
+    sponge::add_sponge_constraints(&mut air, SHAKE256_RATE, perms, message, output);
+
+    // The squeeze selector, one on each squeeze row and zero elsewhere.
+    for global in 0..rows {
+        let hot = (0..perms).any(|j| squeeze_row(j) == global);
+        let value = if hot { Felt::ONE } else { Felt::ZERO };
+        air.add_boundary(SQ_COL, global, value);
+    }
+
+    // The reduction input equals the squeeze word on a squeeze row and is zero
+    // elsewhere, so the coefficient is bound to the hash output.
+    let squeeze_col = lane_low_col(0);
+    air.add_single_row(2, move |row| {
+        row[SQ_COL].mul(row[R_V].sub(row[squeeze_col]))
+    });
+    air.add_single_row(2, move |row| Felt::ONE.sub(row[SQ_COL]).mul(row[R_V]));
+
+    // The reduction, the squeeze word is the quotient times the modulus plus the
+    // coefficient, with the quotient below its bound and the coefficient below the
+    // modulus.
+    let modulus = Felt::new(Q);
+    let modulus_minus_one = Felt::new(Q - 1);
+    air.add_single_row(1, move |row| {
+        row[R_V].sub(row[R_QUO].mul(modulus)).sub(row[R_R])
+    });
+    air.add_single_row(1, move |row| {
+        recompose(row, R_QUO_BITS, QUO_BITS).sub(row[R_QUO])
+    });
+    air.add_single_row(1, move |row| {
+        recompose(row, R_R_BITS, RESIDUE_BITS).sub(row[R_R])
+    });
+    air.add_single_row(1, move |row| {
+        recompose(row, R_SLACK_BITS, RESIDUE_BITS).sub(modulus_minus_one.sub(row[R_R]))
+    });
+    for k in 0..QUO_BITS {
+        let col = R_QUO_BITS + k;
+        air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+    }
+    for start in [R_R_BITS, R_SLACK_BITS] {
+        for k in 0..RESIDUE_BITS {
+            let col = start + k;
+            air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+        }
+    }
+
+    // The per coefficient pieces over the reduced coefficient.
+    decompose::add_constraints(&mut air, DECOMPOSE_BASE);
+    hint::add_constraints(&mut air, HINT_BASE);
+
+    // The permutation binds the reduced coefficient to the decomposition input and
+    // to the hint recovery input, so both pieces act on the hash derived value.
+    let gamma = air.add_challenge();
+    let dec_r = DECOMPOSE_BASE + decompose::COL_R;
+    let hint_r = HINT_BASE + hint::COL_R;
+    air.add_permutation(
+        1,
+        move |row, ch| ch[gamma].sub(row[R_R]),
+        move |row, ch| ch[gamma].sub(row[dec_r]),
+    );
+    air.add_permutation(
+        1,
+        move |row, ch| ch[gamma].sub(row[R_R]),
+        move |row, ch| ch[gamma].sub(row[hint_r]),
+    );
+
+    air
+}
+
+/// A filled fused certificate with its description and the squeeze output.
+pub struct Certificate {
+    /// The joined description shared with the verifier.
+    pub air: Air,
+    /// The filled base trace.
+    pub trace: TraceTable,
+    /// The power of two row count.
+    pub length: usize,
+    /// The squeeze output bytes.
+    pub output: Vec<u8>,
+    /// The hash derived coefficients the arithmetic consumes, one per segment.
+    pub coefficients: Vec<u64>,
+}
+
+fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: usize) {
+    for k in 0..bits {
+        trace.set(col + k, row, Felt::new((value >> k) & 1));
+    }
+}
+
+/// Lays out the fused trace. The sponge squeezes the message for the given number
+/// of segments, each squeeze word reduces to a coefficient, and the decomposition
+/// and hint recovery run over it under the given hint bits, one per segment.
+pub fn certificate_trace(perms: usize, message: &[u8], hints: &[u64]) -> Certificate {
+    let rows = perms * sponge::SEGMENT_ROWS;
+    let mut trace = TraceTable::new(CERT_WIDTH, rows);
+    sponge::fill_sponge_columns(&mut trace, SHAKE256_RATE, perms, message);
+
+    let mut coefficients = Vec::with_capacity(perms);
+    for row in 0..rows {
+        let (v, sq) = if let Some(j) = (0..perms).find(|&j| squeeze_row(j) == row) {
+            (trace.get(lane_low_col(0), row).to_u64(), j)
+        } else {
+            (0, usize::MAX)
+        };
+        let r = v % Q;
+        let quo = v / Q;
+        trace.set(R_V, row, Felt::new(v));
+        trace.set(R_R, row, Felt::new(r));
+        trace.set(R_QUO, row, Felt::new(quo));
+        set_bits(&mut trace, R_QUO_BITS, row, quo, QUO_BITS);
+        set_bits(&mut trace, R_R_BITS, row, r, RESIDUE_BITS);
+        set_bits(&mut trace, R_SLACK_BITS, row, Q - 1 - r, RESIDUE_BITS);
+        if sq != usize::MAX {
+            trace.set(SQ_COL, row, Felt::ONE);
+            coefficients.push(r);
+        }
+        let h = if sq != usize::MAX {
+            hints.get(sq).copied().unwrap_or(0) & 1
+        } else {
+            0
+        };
+        decompose::fill_row(&mut trace, DECOMPOSE_BASE, row, r);
+        hint::fill_row(&mut trace, HINT_BASE, row, r, h);
+    }
+
+    let output = sponge::shake_output(SHAKE256_RATE, perms, message);
+    let air = certificate_air(perms, message, &output);
+    Certificate {
+        air,
+        trace,
+        length: rows,
+        output,
+        coefficients,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stark::{prove, verify, StarkParams};
+
+    fn params() -> StarkParams {
+        StarkParams {
+            lde_blowup: 32,
+            num_queries: 24,
+        }
+    }
+
+    fn challenges() -> [Felt; 1] {
+        [Felt::new(0x1234_5678_9abc)]
+    }
+
+    fn sample() -> Certificate {
+        let hints: Vec<u64> = (0..8u64).map(|i| i & 1).collect();
+        certificate_trace(2, b"module lattice fused certificate", &hints)
+    }
+
+    #[test]
+    fn the_coefficients_are_the_reduced_squeeze_words() {
+        let cert = sample();
+        assert_eq!(cert.coefficients.len(), 2);
+        for (j, c) in cert.coefficients.iter().enumerate() {
+            let word = cert.trace.get(lane_low_col(0), squeeze_row(j)).to_u64();
+            assert_eq!(*c, word % Q);
+            assert!(*c < Q);
+        }
+    }
+
+    #[test]
+    fn the_fused_arithmetic_holds() {
+        let cert = sample();
+        assert!(cert.air.is_satisfied_with(&cert.trace, &challenges()));
+    }
+
+    #[test]
+    fn the_certificate_proves_and_verifies() {
+        let cert = sample();
+        let proof = prove(&cert.air, &cert.trace, &params());
+        let air = certificate_air(2, b"module lattice fused certificate", &cert.output);
+        assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_split_coefficient_breaks_the_binding() {
+        // Feed the decomposition a coefficient other than the reduced squeeze word.
+        // The permutation binding the reduced coefficient to the decomposition input
+        // can no longer close.
+        let cert = sample();
+        let mut trace = cert.trace;
+        let dec_r = DECOMPOSE_BASE + decompose::COL_R;
+        let row = squeeze_row(0);
+        trace.set(dec_r, row, trace.get(dec_r, row).add(Felt::new(7)));
+        assert!(!cert.air.is_satisfied_with(&trace, &challenges()));
+    }
+
+    #[test]
+    fn a_tampered_reduction_is_rejected() {
+        // Claim a different coefficient for a squeeze word without changing the
+        // squeeze. The reduction relation no longer holds.
+        let cert = sample();
+        let mut trace = cert.trace;
+        let row = squeeze_row(1);
+        trace.set(R_R, row, trace.get(R_R, row).add(Felt::ONE));
+        assert!(!cert.air.is_satisfied_with(&trace, &challenges()));
+    }
+
+    #[test]
+    fn a_proof_against_a_wrong_squeeze_is_rejected() {
+        let cert = sample();
+        let proof = prove(&cert.air, &cert.trace, &params());
+        let mut wrong = cert.output.clone();
+        wrong[0] ^= 1;
+        let air = certificate_air(2, b"module lattice fused certificate", &wrong);
+        assert!(!verify(&air, &params(), &proof));
+    }
+}
