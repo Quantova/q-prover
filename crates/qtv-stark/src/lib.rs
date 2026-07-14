@@ -2,6 +2,7 @@
 
 pub mod air;
 pub mod batch;
+pub mod challenge_ball;
 pub mod decompose;
 pub mod examples;
 pub mod field;
