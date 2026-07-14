@@ -14,7 +14,7 @@ fn merkle_bytes(proof: &qtv_stark::merkle::MerkleProof) -> usize {
 }
 
 fn proof_bytes(proof: &StarkProof) -> usize {
-    let mut total = proof.trace_roots.len() * 32;
+    let mut total = 32;
     total += proof.fri.layer_roots.len() * 32;
     total += proof.fri.final_layer.len() * 8;
     for query in &proof.fri.queries {
@@ -28,9 +28,7 @@ fn proof_bytes(proof: &StarkProof) -> usize {
         for row in &opening.rows {
             total += 8;
             total += row.values.len() * 8;
-            for path in &row.paths {
-                total += merkle_bytes(path);
-            }
+            total += merkle_bytes(&row.path);
         }
     }
     total

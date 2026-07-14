@@ -11,7 +11,7 @@
 use crate::air::{Air, TraceTable};
 use crate::field::{root_of_unity, Felt, GENERATOR};
 use crate::fri::{self, FriParams, FriProof, Transcript};
-use crate::merkle::{hash_leaf, Digest, MerkleProof, MerkleTree};
+use crate::merkle::{hash_row, Digest, MerkleProof, MerkleTree};
 use crate::poly;
 
 /// The protocol parameters the prover and the verifier share.
@@ -23,14 +23,15 @@ pub struct StarkParams {
     pub num_queries: usize,
 }
 
-/// One opened trace row, the cells of every column at one domain index.
+/// One opened trace row, the cells of every column at one domain index, tied to
+/// the trace commitment by a single authentication path.
 pub struct RowOpening {
     /// The index of the row in the extended domain.
     pub index: usize,
     /// The opened cell of each column.
     pub values: Vec<Felt>,
-    /// The authentication path of each opened cell.
-    pub paths: Vec<MerkleProof>,
+    /// The authentication path of the row leaf.
+    pub path: MerkleProof,
 }
 
 /// The trace openings that back one query, the current and next rows at the two
@@ -43,8 +44,8 @@ pub struct QueryOpening {
 
 /// A proof that a trace satisfies an algebraic description.
 pub struct StarkProof {
-    /// The Merkle root of every committed trace column.
-    pub trace_roots: Vec<Digest>,
+    /// The Merkle root that commits every trace row.
+    pub trace_root: Digest,
     /// The low degree proof over the composition.
     pub fri: FriProof,
     /// The trace openings that tie the composition to the constraints.
@@ -173,22 +174,27 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
     let domain = Domain::new(air, params);
 
     let mut column_lde: Vec<Vec<Felt>> = Vec::with_capacity(air.width());
-    let mut trees: Vec<MerkleTree> = Vec::with_capacity(air.width());
-    let mut roots: Vec<Digest> = Vec::with_capacity(air.width());
     for column in 0..air.width() {
         let coeffs = poly::interpolate(trace.column(column));
         let lde = poly::evaluate_coset(&coeffs, domain.log_size, domain.shift);
-        let leaves: Vec<Digest> = lde.iter().map(|v| hash_leaf(*v)).collect();
-        let tree = MerkleTree::commit(&leaves);
-        roots.push(tree.root());
-        trees.push(tree);
         column_lde.push(lde);
     }
 
-    let mut transcript = Transcript::new();
-    for root in &roots {
-        transcript.absorb_digest(root);
+    // Commit every extended row under a single leaf so one path opens a whole
+    // row across the columns.
+    let mut row = vec![Felt::ZERO; air.width()];
+    let mut leaves: Vec<Digest> = Vec::with_capacity(domain.size);
+    for i in 0..domain.size {
+        for (column, cell) in column_lde.iter().zip(row.iter_mut()) {
+            *cell = column[i];
+        }
+        leaves.push(hash_row(&row));
     }
+    let tree = MerkleTree::commit(&leaves);
+    let trace_root = tree.root();
+
+    let mut transcript = Transcript::new();
+    transcript.absorb_digest(&trace_root);
     let num_constraints = air.transitions().len() + air.boundaries().len();
     let weights: Vec<Felt> = (0..num_constraints)
         .map(|_| transcript.challenge_felt())
@@ -255,18 +261,17 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         let mut rows = Vec::with_capacity(indices.len());
         for &index in &indices {
             let values: Vec<Felt> = column_lde.iter().map(|col| col[index]).collect();
-            let paths: Vec<MerkleProof> = trees.iter().map(|t| t.open(index)).collect();
             rows.push(RowOpening {
                 index,
                 values,
-                paths,
+                path: tree.open(index),
             });
         }
         openings.push(QueryOpening { rows });
     }
 
     StarkProof {
-        trace_roots: roots,
+        trace_root,
         fri: fri_proof,
         openings,
     }
@@ -280,14 +285,8 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
 /// match the value the low degree test binds at the same position.
 pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
     let domain = Domain::new(air, params);
-    if proof.trace_roots.len() != air.width() {
-        return false;
-    }
-
     let mut transcript = Transcript::new();
-    for root in &proof.trace_roots {
-        transcript.absorb_digest(root);
-    }
+    transcript.absorb_digest(&proof.trace_root);
     let num_constraints = air.transitions().len() + air.boundaries().len();
     let weights: Vec<Felt> = (0..num_constraints)
         .map(|_| transcript.challenge_felt())
@@ -319,23 +318,12 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
             return false;
         }
         for (row, &index) in opening.rows.iter().zip(expected.iter()) {
-            if row.index != index
-                || row.values.len() != air.width()
-                || row.paths.len() != air.width()
+            if row.index != index || row.values.len() != air.width() || row.path.leaf_index != index
             {
                 return false;
             }
-            for column in 0..air.width() {
-                if row.paths[column].leaf_index != index {
-                    return false;
-                }
-                if !crate::merkle::verify(
-                    &proof.trace_roots[column],
-                    &hash_leaf(row.values[column]),
-                    &row.paths[column],
-                ) {
-                    return false;
-                }
+            if !crate::merkle::verify(&proof.trace_root, &hash_row(&row.values), &row.path) {
+                return false;
             }
         }
 
@@ -438,7 +426,7 @@ mod tests {
     fn a_tampered_trace_root_is_rejected() {
         let (air, trace) = squaring(16, Felt::new(3));
         let mut proof = prove(&air, &trace, &params());
-        proof.trace_roots[0][0] ^= 1;
+        proof.trace_root[0] ^= 1;
         assert!(!verify(&air, &params(), &proof));
     }
 
