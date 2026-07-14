@@ -139,17 +139,19 @@ pub fn xor_all(bits: &[Felt]) -> Felt {
 
 // The column layout of the arithmetized permutation. The state bits come first,
 // then the theta parity column, the round constant bits, the state half lanes
-// that bind the public bits, and the round constant half lanes.
-const S_OFF: usize = 0;
-const STATE_BITS: usize = LANES * LANE_BITS;
-const C_OFF: usize = S_OFF + STATE_BITS;
-const C_BITS: usize = 5 * LANE_BITS;
-const RC_OFF: usize = C_OFF + C_BITS;
-const HALF_OFF: usize = RC_OFF + LANE_BITS;
-const HALVES: usize = 2 * LANES;
-const RCHALF_OFF: usize = HALF_OFF + HALVES;
+// that bind the public bits, and the round constant half lanes. The offsets are
+// shared with the sponge, which reuses the same block per permutation.
+pub(crate) const S_OFF: usize = 0;
+pub(crate) const STATE_BITS: usize = LANES * LANE_BITS;
+pub(crate) const C_OFF: usize = S_OFF + STATE_BITS;
+pub(crate) const C_BITS: usize = 5 * LANE_BITS;
+pub(crate) const RC_OFF: usize = C_OFF + C_BITS;
+pub(crate) const HALF_OFF: usize = RC_OFF + LANE_BITS;
+pub(crate) const HALVES: usize = 2 * LANES;
+pub(crate) const RCHALF_OFF: usize = HALF_OFF + HALVES;
 
-/// The full column width of the permutation trace.
+/// The full column width of the permutation trace, also one keccak block of the
+/// sponge trace.
 pub const KECCAK_WIDTH: usize = RCHALF_OFF + 2;
 
 /// The number of rows in the permutation trace, a power of two above the round
@@ -157,7 +159,7 @@ pub const KECCAK_WIDTH: usize = RCHALF_OFF + 2;
 /// around transition never has to hold.
 pub const KECCAK_TRACE_ROWS: usize = 32;
 
-fn s_idx(x: usize, y: usize, z: usize) -> usize {
+pub(crate) fn s_idx(x: usize, y: usize, z: usize) -> usize {
     (x + 5 * y) * LANE_BITS + z
 }
 
@@ -185,7 +187,7 @@ fn b_bit(row: &[Felt], px: usize, py: usize, z: usize) -> Felt {
 
 // The round output bit at x, y, z, chi over the rewired theta with iota on the
 // zero lane.
-fn round_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
+pub(crate) fn round_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
     let b0 = b_bit(row, x, y, z);
     let b1 = b_bit(row, (x + 1) % 5, y, z);
     let b2 = b_bit(row, (x + 2) % 5, y, z);
@@ -199,7 +201,7 @@ fn round_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
 }
 
 // The field value of a thirty two bit half lane from its bits.
-fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
+pub(crate) fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
     let two = Felt::new(2);
     let mut acc = Felt::ZERO;
     let mut weight = Felt::ONE;
@@ -210,49 +212,54 @@ fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
     acc
 }
 
+/// Adds the per row structural constraints of one keccak block to the air, the
+/// state and round constant bit constraints, the theta parity column, and the
+/// half lane recompositions. The offsets are relative to the base of the block,
+/// so the sponge can add one set per permutation. These hold on every row.
+pub(crate) fn add_block_constraints(air: &mut Air, base: usize) {
+    for i in 0..STATE_BITS {
+        let col = base + S_OFF + i;
+        air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+    }
+    for z in 0..LANE_BITS {
+        let col = base + RC_OFF + z;
+        air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+    }
+    for x in 0..5 {
+        for z in 0..LANE_BITS {
+            let cc = base + c_idx(x, z);
+            air.add_single_row(5, move |row| {
+                let bits = [
+                    row[base + s_idx(x, 0, z)],
+                    row[base + s_idx(x, 1, z)],
+                    row[base + s_idx(x, 2, z)],
+                    row[base + s_idx(x, 3, z)],
+                    row[base + s_idx(x, 4, z)],
+                ];
+                row[cc].sub(xor_all(&bits))
+            });
+        }
+    }
+    for l in 0..LANES {
+        let lo = base + HALF_OFF + 2 * l;
+        let hi = base + HALF_OFF + 2 * l + 1;
+        let sbase = base + l * LANE_BITS;
+        air.add_single_row(1, move |row| row[lo].sub(half_value(row, sbase, 0)));
+        air.add_single_row(1, move |row| row[hi].sub(half_value(row, sbase, 32)));
+    }
+    let rc_lo = base + RCHALF_OFF;
+    let rc_hi = base + RCHALF_OFF + 1;
+    let rc_base = base + RC_OFF;
+    air.add_single_row(1, move |row| row[rc_lo].sub(half_value(row, rc_base, 0)));
+    air.add_single_row(1, move |row| row[rc_hi].sub(half_value(row, rc_base, 32)));
+}
+
 /// Builds the description of the permutation over a public input and output. The
 /// input and output are bound bit exact through the half lane columns.
 pub fn keccak_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
     let mut air = Air::new(KECCAK_WIDTH, KECCAK_TRACE_ROWS);
 
-    // Every state bit and round constant bit is zero or one.
-    for i in 0..STATE_BITS {
-        air.add_single_row(2, move |row| row[i].mul(row[i].sub(Felt::ONE)));
-    }
-    for z in 0..LANE_BITS {
-        let col = RC_OFF + z;
-        air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
-    }
-
-    // The theta parity column is the exclusive or over the y axis.
-    for x in 0..5 {
-        for z in 0..LANE_BITS {
-            air.add_single_row(5, move |row| {
-                let bits = [
-                    row[s_idx(x, 0, z)],
-                    row[s_idx(x, 1, z)],
-                    row[s_idx(x, 2, z)],
-                    row[s_idx(x, 3, z)],
-                    row[s_idx(x, 4, z)],
-                ];
-                row[c_idx(x, z)].sub(xor_all(&bits))
-            });
-        }
-    }
-
-    // The half lanes recompose the state bits, low then high. A thirty two bit
-    // sum stays below the field, so the bits are pinned uniquely.
-    for l in 0..LANES {
-        let lo = HALF_OFF + 2 * l;
-        let hi = HALF_OFF + 2 * l + 1;
-        let base = l * LANE_BITS;
-        air.add_single_row(1, move |row| row[lo].sub(half_value(row, base, 0)));
-        air.add_single_row(1, move |row| row[hi].sub(half_value(row, base, 32)));
-    }
-    air.add_single_row(1, |row| row[RCHALF_OFF].sub(half_value(row, RC_OFF, 0)));
-    air.add_single_row(1, |row| {
-        row[RCHALF_OFF + 1].sub(half_value(row, RC_OFF, 32))
-    });
+    add_block_constraints(&mut air, 0);
 
     // The round relation, the next state bit is chi over the rewired theta of the
     // current state with iota folded in on the zero lane.
@@ -287,10 +294,22 @@ pub fn keccak_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
     air
 }
 
-fn fill_row(trace: &mut TraceTable, row: usize, state: &[u64; LANES], rc: u64) {
+/// Fills one keccak block of a trace row, the state bits, the theta parity, the
+/// round constant bits, and the half lanes, at the given column base.
+pub(crate) fn fill_block_row(
+    trace: &mut TraceTable,
+    base: usize,
+    row: usize,
+    state: &[u64; LANES],
+    rc: u64,
+) {
     for l in 0..LANES {
         for z in 0..LANE_BITS {
-            trace.set(l * LANE_BITS + z, row, Felt::new((state[l] >> z) & 1));
+            trace.set(
+                base + l * LANE_BITS + z,
+                row,
+                Felt::new((state[l] >> z) & 1),
+            );
         }
     }
     let mut c = [0u64; 5];
@@ -299,18 +318,30 @@ fn fill_row(trace: &mut TraceTable, row: usize, state: &[u64; LANES], rc: u64) {
     }
     for (x, cell) in c.iter().enumerate() {
         for z in 0..LANE_BITS {
-            trace.set(C_OFF + x * LANE_BITS + z, row, Felt::new((cell >> z) & 1));
+            trace.set(
+                base + C_OFF + x * LANE_BITS + z,
+                row,
+                Felt::new((cell >> z) & 1),
+            );
         }
     }
     for z in 0..LANE_BITS {
-        trace.set(RC_OFF + z, row, Felt::new((rc >> z) & 1));
+        trace.set(base + RC_OFF + z, row, Felt::new((rc >> z) & 1));
     }
     for l in 0..LANES {
-        trace.set(HALF_OFF + 2 * l, row, Felt::new(state[l] & 0xffff_ffff));
-        trace.set(HALF_OFF + 2 * l + 1, row, Felt::new(state[l] >> 32));
+        trace.set(
+            base + HALF_OFF + 2 * l,
+            row,
+            Felt::new(state[l] & 0xffff_ffff),
+        );
+        trace.set(base + HALF_OFF + 2 * l + 1, row, Felt::new(state[l] >> 32));
     }
-    trace.set(RCHALF_OFF, row, Felt::new(rc & 0xffff_ffff));
-    trace.set(RCHALF_OFF + 1, row, Felt::new(rc >> 32));
+    trace.set(base + RCHALF_OFF, row, Felt::new(rc & 0xffff_ffff));
+    trace.set(base + RCHALF_OFF + 1, row, Felt::new(rc >> 32));
+}
+
+fn fill_row(trace: &mut TraceTable, row: usize, state: &[u64; LANES], rc: u64) {
+    fill_block_row(trace, 0, row, state, rc);
 }
 
 /// A filled permutation trace with its description and the output state.
