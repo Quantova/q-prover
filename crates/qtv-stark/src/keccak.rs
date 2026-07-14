@@ -7,6 +7,7 @@
 //! field and expresses every Boolean step as field arithmetic, an exclusive or
 //! of two bits as a plus b minus two a b, an and as a b, a not as one minus a.
 
+use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 
 /// The number of lanes in the state.
@@ -136,6 +137,218 @@ pub fn xor_all(bits: &[Felt]) -> Felt {
     acc
 }
 
+// The column layout of the arithmetized permutation. The state bits come first,
+// then the theta parity column, the round constant bits, the state half lanes
+// that bind the public bits, and the round constant half lanes.
+const S_OFF: usize = 0;
+const STATE_BITS: usize = LANES * LANE_BITS;
+const C_OFF: usize = S_OFF + STATE_BITS;
+const C_BITS: usize = 5 * LANE_BITS;
+const RC_OFF: usize = C_OFF + C_BITS;
+const HALF_OFF: usize = RC_OFF + LANE_BITS;
+const HALVES: usize = 2 * LANES;
+const RCHALF_OFF: usize = HALF_OFF + HALVES;
+
+/// The full column width of the permutation trace.
+pub const KECCAK_WIDTH: usize = RCHALF_OFF + 2;
+
+/// The number of rows in the permutation trace, a power of two above the round
+/// count. Rows past the twenty fourth carry further genuine rounds so the wrap
+/// around transition never has to hold.
+pub const KECCAK_TRACE_ROWS: usize = 32;
+
+fn s_idx(x: usize, y: usize, z: usize) -> usize {
+    (x + 5 * y) * LANE_BITS + z
+}
+
+fn c_idx(x: usize, z: usize) -> usize {
+    C_OFF + x * LANE_BITS + z
+}
+
+// The theta output bit at the coordinates x, y, z read from the current row.
+fn theta_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
+    let a = row[s_idx(x, y, z)];
+    let c1 = row[c_idx((x + 4) % 5, z)];
+    let c2 = row[c_idx((x + 1) % 5, (z + LANE_BITS - 1) % LANE_BITS)];
+    xor3(a, c1, c2)
+}
+
+// The rho and pi rewired bit at the coordinates px, py, z, read from the theta
+// output of its source lane.
+fn b_bit(row: &[Felt], px: usize, py: usize, z: usize) -> Felt {
+    let sx = (px + 3 * py) % 5;
+    let sy = px;
+    let r = (RHO[sx][sy] % LANE_BITS as u32) as usize;
+    let sz = (z + LANE_BITS - r) % LANE_BITS;
+    theta_bit(row, sx, sy, sz)
+}
+
+// The round output bit at x, y, z, chi over the rewired theta with iota on the
+// zero lane.
+fn round_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
+    let b0 = b_bit(row, x, y, z);
+    let b1 = b_bit(row, (x + 1) % 5, y, z);
+    let b2 = b_bit(row, (x + 2) % 5, y, z);
+    let and = Felt::ONE.sub(b1).mul(b2);
+    let chi = xor2(b0, and);
+    if x == 0 && y == 0 {
+        xor2(chi, row[RC_OFF + z])
+    } else {
+        chi
+    }
+}
+
+// The field value of a thirty two bit half lane from its bits.
+fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
+    let two = Felt::new(2);
+    let mut acc = Felt::ZERO;
+    let mut weight = Felt::ONE;
+    for z in start..start + 32 {
+        acc = acc.add(row[base_bit + z].mul(weight));
+        weight = weight.mul(two);
+    }
+    acc
+}
+
+/// Builds the description of the permutation over a public input and output. The
+/// input and output are bound bit exact through the half lane columns.
+pub fn keccak_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
+    let mut air = Air::new(KECCAK_WIDTH, KECCAK_TRACE_ROWS);
+
+    // Every state bit and round constant bit is zero or one.
+    for i in 0..STATE_BITS {
+        air.add_single_row(2, move |row| row[i].mul(row[i].sub(Felt::ONE)));
+    }
+    for z in 0..LANE_BITS {
+        let col = RC_OFF + z;
+        air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+    }
+
+    // The theta parity column is the exclusive or over the y axis.
+    for x in 0..5 {
+        for z in 0..LANE_BITS {
+            air.add_single_row(5, move |row| {
+                let bits = [
+                    row[s_idx(x, 0, z)],
+                    row[s_idx(x, 1, z)],
+                    row[s_idx(x, 2, z)],
+                    row[s_idx(x, 3, z)],
+                    row[s_idx(x, 4, z)],
+                ];
+                row[c_idx(x, z)].sub(xor_all(&bits))
+            });
+        }
+    }
+
+    // The half lanes recompose the state bits, low then high. A thirty two bit
+    // sum stays below the field, so the bits are pinned uniquely.
+    for l in 0..LANES {
+        let lo = HALF_OFF + 2 * l;
+        let hi = HALF_OFF + 2 * l + 1;
+        let base = l * LANE_BITS;
+        air.add_single_row(1, move |row| row[lo].sub(half_value(row, base, 0)));
+        air.add_single_row(1, move |row| row[hi].sub(half_value(row, base, 32)));
+    }
+    air.add_single_row(1, |row| row[RCHALF_OFF].sub(half_value(row, RC_OFF, 0)));
+    air.add_single_row(1, |row| {
+        row[RCHALF_OFF + 1].sub(half_value(row, RC_OFF, 32))
+    });
+
+    // The round relation, the next state bit is chi over the rewired theta of the
+    // current state with iota folded in on the zero lane.
+    for x in 0..5 {
+        for y in 0..5 {
+            for z in 0..LANE_BITS {
+                let target = s_idx(x, y, z);
+                air.add_transition(10, move |current, next| {
+                    next[target].sub(round_bit(current, x, y, z))
+                });
+            }
+        }
+    }
+
+    // The public input at the first row and the output at the round count row.
+    for l in 0..LANES {
+        let lo = HALF_OFF + 2 * l;
+        let hi = HALF_OFF + 2 * l + 1;
+        air.add_boundary(lo, 0, Felt::new(input[l] & 0xffff_ffff));
+        air.add_boundary(hi, 0, Felt::new(input[l] >> 32));
+        air.add_boundary(lo, KECCAK_ROUNDS, Felt::new(output[l] & 0xffff_ffff));
+        air.add_boundary(hi, KECCAK_ROUNDS, Felt::new(output[l] >> 32));
+    }
+
+    // The round constant at every row, so the iota step reads a pinned value.
+    let rc = round_constants(KECCAK_TRACE_ROWS);
+    for (r, value) in rc.iter().enumerate() {
+        air.add_boundary(RCHALF_OFF, r, Felt::new(value & 0xffff_ffff));
+        air.add_boundary(RCHALF_OFF + 1, r, Felt::new(value >> 32));
+    }
+
+    air
+}
+
+fn fill_row(trace: &mut TraceTable, row: usize, state: &[u64; LANES], rc: u64) {
+    for l in 0..LANES {
+        for z in 0..LANE_BITS {
+            trace.set(l * LANE_BITS + z, row, Felt::new((state[l] >> z) & 1));
+        }
+    }
+    let mut c = [0u64; 5];
+    for (x, cell) in c.iter_mut().enumerate() {
+        *cell = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
+    }
+    for (x, cell) in c.iter().enumerate() {
+        for z in 0..LANE_BITS {
+            trace.set(C_OFF + x * LANE_BITS + z, row, Felt::new((cell >> z) & 1));
+        }
+    }
+    for z in 0..LANE_BITS {
+        trace.set(RC_OFF + z, row, Felt::new((rc >> z) & 1));
+    }
+    for l in 0..LANES {
+        trace.set(HALF_OFF + 2 * l, row, Felt::new(state[l] & 0xffff_ffff));
+        trace.set(HALF_OFF + 2 * l + 1, row, Felt::new(state[l] >> 32));
+    }
+    trace.set(RCHALF_OFF, row, Felt::new(rc & 0xffff_ffff));
+    trace.set(RCHALF_OFF + 1, row, Felt::new(rc >> 32));
+}
+
+/// A filled permutation trace with its description and the output state.
+pub struct KeccakInstance {
+    /// The description shared with the verifier.
+    pub air: Air,
+    /// The filled trace.
+    pub trace: TraceTable,
+    /// The output after the standard round count.
+    pub output: [u64; LANES],
+}
+
+/// Builds the permutation trace over the input state. The trace runs further
+/// genuine rounds past the twenty fourth to fill the power of two length, and the
+/// output is read at the round count row.
+pub fn keccak_trace(input: &[u64; LANES]) -> KeccakInstance {
+    let rc = round_constants(KECCAK_TRACE_ROWS);
+    let mut states: Vec<[u64; LANES]> = Vec::with_capacity(KECCAK_TRACE_ROWS);
+    let mut state = *input;
+    states.push(state);
+    for value in rc.iter().take(KECCAK_TRACE_ROWS - 1) {
+        state = keccak_round(&state, *value);
+        states.push(state);
+    }
+    let output = states[KECCAK_ROUNDS];
+
+    let mut trace = TraceTable::new(KECCAK_WIDTH, KECCAK_TRACE_ROWS);
+    for row in 0..KECCAK_TRACE_ROWS {
+        fill_row(&mut trace, row, &states[row], rc[row]);
+    }
+
+    KeccakInstance {
+        air: keccak_air(input, &output),
+        trace,
+        output,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,6 +462,56 @@ mod tests {
         let mut other = state;
         other[3] ^= 1;
         assert_ne!(keccak_f1600(&other), permuted);
+    }
+
+    fn sample_input() -> [u64; LANES] {
+        let mut state = [0u64; LANES];
+        for (i, lane) in state.iter_mut().enumerate() {
+            *lane = (i as u64)
+                .wrapping_mul(0x0123_4567_89ab_cdef)
+                .wrapping_add(0xdead_beef);
+        }
+        state
+    }
+
+    #[test]
+    fn the_trace_output_matches_the_permutation() {
+        let input = sample_input();
+        let instance = keccak_trace(&input);
+        assert_eq!(instance.output, keccak_f1600(&input));
+    }
+
+    #[test]
+    fn the_arithmetic_holds_on_every_row() {
+        let instance = keccak_trace(&sample_input());
+        assert!(instance.air.is_satisfied(&instance.trace));
+    }
+
+    #[test]
+    fn the_all_zero_state_is_arithmetized() {
+        let instance = keccak_trace(&[0u64; LANES]);
+        assert!(instance.air.is_satisfied(&instance.trace));
+        assert_eq!(instance.output, keccak_f1600(&[0u64; LANES]));
+    }
+
+    #[test]
+    fn a_tampered_state_bit_is_rejected() {
+        let mut instance = keccak_trace(&sample_input());
+        // Flip a state bit on an interior round, which breaks the round relation
+        // that produced it.
+        let cell = instance.trace.get(37, 5);
+        instance.trace.set(37, 5, xor2(cell, Felt::ONE));
+        assert!(!instance.air.is_satisfied(&instance.trace));
+    }
+
+    #[test]
+    fn a_tampered_output_is_rejected() {
+        let input = sample_input();
+        let instance = keccak_trace(&input);
+        let mut wrong = keccak_f1600(&input);
+        wrong[0] ^= 1;
+        let air = keccak_air(&input, &wrong);
+        assert!(!air.is_satisfied(&instance.trace));
     }
 
     #[test]
