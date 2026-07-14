@@ -6,8 +6,8 @@
 //! and the query positions are all drawn from SHA3 over the transcript, so the
 //! protocol is non interactive.
 
-use crate::field::{Felt, MODULUS};
-use crate::merkle::Digest;
+use crate::field::{root_of_unity, Felt, MODULUS};
+use crate::merkle::{hash_leaf, Digest, MerkleProof, MerkleTree};
 use qtv_crypto::sha3::sha3_256;
 
 /// Parameters that fix the FRI schedule.
@@ -135,6 +135,117 @@ impl Default for Transcript {
     }
 }
 
+/// One opened sibling pair inside a single folding layer.
+pub struct QueryLayer {
+    /// The value at the queried position.
+    pub eval: Felt,
+    /// The value at the paired position half a domain away.
+    pub sibling: Felt,
+    /// The authentication path for the queried value.
+    pub eval_path: MerkleProof,
+    /// The authentication path for the paired value.
+    pub sibling_path: MerkleProof,
+}
+
+/// The openings that back one query across all folding layers.
+pub struct QueryProof {
+    /// The sampled position in the first folded domain.
+    pub position: usize,
+    /// The opened pair at each folding layer.
+    pub layers: Vec<QueryLayer>,
+}
+
+/// A low degree proof over a committed evaluation vector.
+pub struct FriProof {
+    /// The Merkle roots of the committed folding layers.
+    pub layer_roots: Vec<Digest>,
+    /// The final folded layer, a constant vector sent in the clear.
+    pub final_layer: Vec<Felt>,
+    /// The query openings that tie the layers together.
+    pub queries: Vec<QueryProof>,
+}
+
+fn commit_layer(values: &[Felt]) -> MerkleTree {
+    let leaves: Vec<Digest> = values.iter().map(|v| hash_leaf(*v)).collect();
+    MerkleTree::commit(&leaves)
+}
+
+/// Produces a low degree proof that the evaluation vector is close to a
+/// polynomial of degree below the parameter degree bound.
+pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
+    let n = params.domain_size();
+    assert_eq!(
+        evaluations.len(),
+        n,
+        "evaluation vector must fill the domain"
+    );
+    assert!(
+        params.blowup.is_power_of_two(),
+        "blow up must be a power of two"
+    );
+    let rounds = params.rounds();
+    assert!(rounds >= 1, "the schedule needs at least one fold");
+
+    let mut transcript = Transcript::new();
+    let mut layers: Vec<Vec<Felt>> = vec![evaluations.to_vec()];
+    let mut trees: Vec<MerkleTree> = Vec::with_capacity(rounds);
+    let mut layer_roots: Vec<Digest> = Vec::with_capacity(rounds);
+
+    let first_tree = commit_layer(&layers[0]);
+    transcript.absorb_digest(&first_tree.root());
+    layer_roots.push(first_tree.root());
+    trees.push(first_tree);
+
+    let mut generator_inv = root_of_unity(params.log_domain_size).inv();
+    let mut final_layer: Vec<Felt> = Vec::new();
+
+    for round in 0..rounds {
+        let challenge = transcript.challenge_felt();
+        let folded = fold_layer(&layers[round], challenge, generator_inv);
+        if round < rounds - 1 {
+            let tree = commit_layer(&folded);
+            transcript.absorb_digest(&tree.root());
+            layer_roots.push(tree.root());
+            trees.push(tree);
+            layers.push(folded);
+            generator_inv = generator_inv.mul(generator_inv);
+        } else {
+            for value in &folded {
+                transcript.absorb_felt(*value);
+            }
+            final_layer = folded;
+        }
+    }
+
+    let half_domain = n / 2;
+    let mut queries = Vec::with_capacity(params.num_queries);
+    for _ in 0..params.num_queries {
+        let position = transcript.challenge_index(half_domain);
+        let mut opened = Vec::with_capacity(rounds);
+        for round in 0..rounds {
+            let half = half_domain >> round;
+            let index = position % half;
+            let layer = &layers[round];
+            opened.push(QueryLayer {
+                eval: layer[index],
+                sibling: layer[index + half],
+                eval_path: trees[round].open(index),
+                sibling_path: trees[round].open(index + half),
+            });
+        }
+        queries.push(QueryProof {
+            position,
+            layers: opened,
+        });
+    }
+
+    FriProof {
+        layer_roots,
+        final_layer,
+        queries,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +320,26 @@ mod tests {
         b.absorb(b"same");
         assert_eq!(a.challenge_felt(), b.challenge_felt());
         assert_eq!(a.challenge_index(64), b.challenge_index(64));
+    }
+
+    #[test]
+    fn a_proof_has_the_scheduled_shape() {
+        let params = FriParams {
+            log_domain_size: 8,
+            num_queries: 12,
+            blowup: 4,
+        };
+        let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
+        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let proof = prove(&evals, &params);
+
+        assert_eq!(proof.layer_roots.len(), params.rounds());
+        assert_eq!(proof.final_layer.len(), params.blowup);
+        assert_eq!(proof.queries.len(), params.num_queries);
+        for query in &proof.queries {
+            assert_eq!(query.layers.len(), params.rounds());
+        }
+        let constant = proof.final_layer[0];
+        assert!(proof.final_layer.iter().all(|v| *v == constant));
     }
 }
