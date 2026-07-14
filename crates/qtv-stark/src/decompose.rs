@@ -19,7 +19,8 @@ pub const HIGH_BITS: usize = 4;
 /// The bit width that covers the shifted low part.
 pub const LOW_BITS: usize = 20;
 
-const COL_R: usize = 0;
+/// The input coefficient column, relative to the piece base.
+pub const COL_R: usize = 0;
 const COL_R1: usize = 1;
 const COL_R0S: usize = 2;
 const COL_KC: usize = 3;
@@ -27,7 +28,9 @@ const COL_R0S_INV: usize = 4;
 const COL_R1_BITS: usize = 5;
 const COL_R0S_BITS: usize = COL_R1_BITS + HIGH_BITS;
 const COL_R0S_SLACK: usize = COL_R0S_BITS + LOW_BITS;
-const WIDTH: usize = COL_R0S_SLACK + LOW_BITS;
+
+/// The column width of the decomposition piece.
+pub const WIDTH: usize = COL_R0S_SLACK + LOW_BITS;
 
 // The shift that carries the centered low part into the non negative range
 // zero to alpha.
@@ -44,70 +47,79 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     acc
 }
 
-/// Builds the decomposition description of the given length. The length must be a
-pub fn decompose_air(length: usize) -> Air {
-    let mut air = Air::new(WIDTH, length);
+/// Adds the decomposition constraints at the given column base, so the piece can
+pub fn add_constraints(air: &mut Air, base: usize) {
     let alpha = Felt::new(ALPHA);
     let modulus = Felt::new(Q);
     let low_shift = Felt::new(LOW_SHIFT);
     let low_bound = Felt::new(ALPHA);
+    let r = base + COL_R;
+    let r1 = base + COL_R1;
+    let r0s = base + COL_R0S;
+    let kc = base + COL_KC;
+    let r0s_inv = base + COL_R0S_INV;
 
     // r equals r1 times alpha plus the centered low part plus the wrap term. The
     // centered low part is the shifted low column minus gamma2.
     air.add_single_row(1, move |row| {
-        row[COL_R]
-            .sub(row[COL_R1].mul(alpha))
-            .sub(row[COL_R0S].sub(low_shift))
-            .sub(row[COL_KC].mul(modulus))
+        row[r]
+            .sub(row[r1].mul(alpha))
+            .sub(row[r0s].sub(low_shift))
+            .sub(row[kc].mul(modulus))
     });
 
     // The wrap term is a bit.
-    air.add_single_row(2, |row| row[COL_KC].mul(row[COL_KC].sub(Felt::ONE)));
+    air.add_single_row(2, move |row| row[kc].mul(row[kc].sub(Felt::ONE)));
 
     // The wrap only fires for the top segment, where the high part is zero.
-    air.add_single_row(2, |row| row[COL_KC].mul(row[COL_R1]));
+    air.add_single_row(2, move |row| row[kc].mul(row[r1]));
 
     // Off the wrap the centered low part stays above minus gamma2, so the
     // shifted low part is non zero. The inverse witness pins that, which removes
     // the boundary ambiguity between the two representations at plus or minus
     // gamma2.
-    air.add_single_row(3, |row| {
+    air.add_single_row(3, move |row| {
         Felt::ONE
-            .sub(row[COL_KC])
-            .mul(row[COL_R0S].mul(row[COL_R0S_INV]).sub(Felt::ONE))
+            .sub(row[kc])
+            .mul(row[r0s].mul(row[r0s_inv]).sub(Felt::ONE))
     });
 
     // The high part recomposes from four bits, which forces it below sixteen.
-    air.add_single_row(1, |row| {
-        recompose(row, COL_R1_BITS, HIGH_BITS).sub(row[COL_R1])
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_R1_BITS, HIGH_BITS).sub(row[r1])
     });
 
     // The shifted low part recomposes, and its slack recomposes to alpha minus
     // it, which together force it within zero to alpha.
-    air.add_single_row(1, |row| {
-        recompose(row, COL_R0S_BITS, LOW_BITS).sub(row[COL_R0S])
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_R0S_BITS, LOW_BITS).sub(row[r0s])
     });
     air.add_single_row(1, move |row| {
-        recompose(row, COL_R0S_SLACK, LOW_BITS).sub(low_bound.sub(row[COL_R0S]))
+        recompose(row, base + COL_R0S_SLACK, LOW_BITS).sub(low_bound.sub(row[r0s]))
     });
 
     for k in 0..HIGH_BITS {
-        let col = COL_R1_BITS + k;
+        let col = base + COL_R1_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
     }
-    for base in [COL_R0S_BITS, COL_R0S_SLACK] {
+    for start in [COL_R0S_BITS, COL_R0S_SLACK] {
         for k in 0..LOW_BITS {
-            let col = base + k;
+            let col = base + start + k;
             air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
         }
     }
+}
 
+/// Builds the decomposition description of the given length. The length must be a
+pub fn decompose_air(length: usize) -> Air {
+    let mut air = Air::new(WIDTH, length);
+    add_constraints(&mut air, 0);
     air
 }
 
-fn set_bits(trace: &mut TraceTable, base: usize, row: usize, value: u64, bits: usize) {
+fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: usize) {
     for k in 0..bits {
-        trace.set(base + k, row, Felt::new((value >> k) & 1));
+        trace.set(col + k, row, Felt::new((value >> k) & 1));
     }
 }
 
@@ -127,23 +139,24 @@ pub fn decompose(r: u64) -> (u64, i64, u64) {
     }
 }
 
-fn fill_row(trace: &mut TraceTable, row: usize, r: u64) {
+/// Fills one decomposition row at the given column base.
+pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, r: u64) {
     let (r1, r0c, kc) = decompose(r);
     let r0s = (r0c + LOW_SHIFT as i64) as u64;
-    trace.set(COL_R, row, Felt::new(r));
-    trace.set(COL_R1, row, Felt::new(r1));
-    trace.set(COL_R0S, row, Felt::new(r0s));
-    trace.set(COL_KC, row, Felt::new(kc));
+    trace.set(base + COL_R, row, Felt::new(r));
+    trace.set(base + COL_R1, row, Felt::new(r1));
+    trace.set(base + COL_R0S, row, Felt::new(r0s));
+    trace.set(base + COL_KC, row, Felt::new(kc));
     let inverse = if kc == 0 {
         Felt::new(r0s).inv()
     } else {
         Felt::ZERO
     };
-    trace.set(COL_R0S_INV, row, inverse);
-    set_bits(trace, COL_R1_BITS, row, r1, HIGH_BITS);
-    set_bits(trace, COL_R0S_BITS, row, r0s, LOW_BITS);
+    trace.set(base + COL_R0S_INV, row, inverse);
+    set_bits(trace, base + COL_R1_BITS, row, r1, HIGH_BITS);
+    set_bits(trace, base + COL_R0S_BITS, row, r0s, LOW_BITS);
     let slack = ALPHA.wrapping_sub(r0s);
-    set_bits(trace, COL_R0S_SLACK, row, slack, LOW_BITS);
+    set_bits(trace, base + COL_R0S_SLACK, row, slack, LOW_BITS);
 }
 
 /// A filled decomposition batch with its description.
@@ -167,7 +180,7 @@ pub fn decompose_batch(coefficients: &[u64]) -> DecomposeBatch {
         } else {
             0
         };
-        fill_row(&mut trace, row, r);
+        fill_row(&mut trace, 0, row, r);
     }
     DecomposeBatch {
         air: decompose_air(length),
