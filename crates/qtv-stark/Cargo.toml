@@ -29,5 +29,9 @@ name = "ntt"
 harness = false
 
 [[bench]]
+name = "sponge"
+harness = false
+
+[[bench]]
 name = "verify"
 harness = false
