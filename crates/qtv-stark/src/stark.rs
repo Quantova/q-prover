@@ -116,13 +116,18 @@ impl Domain {
     }
 }
 
-// Inverts x minus each boundary point at a single point, for the verifier which
-// only touches a handful of points.
+// Inverts x minus each boundary point at a single point. One field inversion
+// serves all boundaries through the running product trick, so a description with
+// many boundaries stays cheap for the verifier.
 fn boundary_inverses(point: Felt, boundary_points: &[Felt]) -> Vec<Felt> {
-    boundary_points
+    if boundary_points.is_empty() {
+        return Vec::new();
+    }
+    let denominators: Vec<Felt> = boundary_points
         .iter()
-        .map(|boundary_point| point.sub(*boundary_point).inv())
-        .collect()
+        .map(|boundary_point| point.sub(*boundary_point))
+        .collect();
+    poly::batch_inverse(&denominators)
 }
 
 // Evaluates the weighted composition at one point. The vanishing inverse is the
