@@ -246,6 +246,107 @@ pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
     }
 }
 
+/// Checks a low degree proof against the FRI schedule.
+///
+/// The check rebuilds the transcript, verifies every opened path, replays the
+/// fold at each queried position, and requires the final layer to be constant.
+pub fn verify(params: &FriParams, proof: &FriProof) -> bool {
+    let n = params.domain_size();
+    if !params.blowup.is_power_of_two() {
+        return false;
+    }
+    let rounds = params.rounds();
+    if rounds == 0
+        || proof.layer_roots.len() != rounds
+        || proof.final_layer.len() != params.blowup
+        || proof.queries.len() != params.num_queries
+    {
+        return false;
+    }
+
+    let constant = proof.final_layer[0];
+    if proof.final_layer.iter().any(|v| *v != constant) {
+        return false;
+    }
+
+    let mut transcript = Transcript::new();
+    transcript.absorb_digest(&proof.layer_roots[0]);
+    let mut challenges = Vec::with_capacity(rounds);
+    for round in 0..rounds {
+        challenges.push(transcript.challenge_felt());
+        if round < rounds - 1 {
+            transcript.absorb_digest(&proof.layer_roots[round + 1]);
+        } else {
+            for value in &proof.final_layer {
+                transcript.absorb_felt(*value);
+            }
+        }
+    }
+
+    let half_domain = n / 2;
+    let mut positions = Vec::with_capacity(params.num_queries);
+    for _ in 0..params.num_queries {
+        positions.push(transcript.challenge_index(half_domain));
+    }
+
+    let mut generator_inv = Vec::with_capacity(rounds);
+    let mut current = root_of_unity(params.log_domain_size).inv();
+    for _ in 0..rounds {
+        generator_inv.push(current);
+        current = current.mul(current);
+    }
+
+    for (query, expected_position) in proof.queries.iter().zip(positions.iter()) {
+        if query.position != *expected_position || query.layers.len() != rounds {
+            return false;
+        }
+        for round in 0..rounds {
+            let half = half_domain >> round;
+            let index = query.position % half;
+            let layer = &query.layers[round];
+
+            if layer.eval_path.leaf_index != index || layer.sibling_path.leaf_index != index + half
+            {
+                return false;
+            }
+            if !crate::merkle::verify(
+                &proof.layer_roots[round],
+                &hash_leaf(layer.eval),
+                &layer.eval_path,
+            ) {
+                return false;
+            }
+            if !crate::merkle::verify(
+                &proof.layer_roots[round],
+                &hash_leaf(layer.sibling),
+                &layer.sibling_path,
+            ) {
+                return false;
+            }
+
+            let x_inv = generator_inv[round].pow(index as u64);
+            let folded = fold_pair(layer.eval, layer.sibling, challenges[round], x_inv);
+
+            if round < rounds - 1 {
+                let next = &query.layers[round + 1];
+                let half_next = half >> 1;
+                let expected = if index < half_next {
+                    next.eval
+                } else {
+                    next.sibling
+                };
+                if folded != expected {
+                    return false;
+                }
+            } else if folded != proof.final_layer[index] {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,5 +442,56 @@ mod tests {
         }
         let constant = proof.final_layer[0];
         assert!(proof.final_layer.iter().all(|v| *v == constant));
+    }
+
+    fn sample_params() -> FriParams {
+        FriParams {
+            log_domain_size: 10,
+            num_queries: 24,
+            blowup: 8,
+        }
+    }
+
+    #[test]
+    fn a_low_degree_vector_is_accepted() {
+        let params = sample_params();
+        let coeffs: Vec<Felt> = (0..params.degree_bound() as u64)
+            .map(|i| Felt::new(i.wrapping_mul(0x9e37_79b9) ^ 0x51))
+            .collect();
+        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let proof = prove(&evals, &params);
+        assert!(verify(&params, &proof));
+    }
+
+    #[test]
+    fn a_high_degree_vector_is_rejected() {
+        let params = sample_params();
+        let coeffs: Vec<Felt> = (0..params.domain_size() as u64)
+            .map(|i| Felt::new(i.wrapping_mul(0xd1b5_4a32) ^ 0x2f))
+            .collect();
+        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let proof = prove(&evals, &params);
+        assert!(!verify(&params, &proof));
+    }
+
+    #[test]
+    fn a_tampered_opening_is_rejected() {
+        let params = sample_params();
+        let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
+        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let mut proof = prove(&evals, &params);
+        proof.queries[0].layers[0].eval = proof.queries[0].layers[0].eval.add(Felt::ONE);
+        assert!(!verify(&params, &proof));
+    }
+
+    #[test]
+    fn a_forged_final_constant_is_rejected() {
+        let params = sample_params();
+        let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
+        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let mut proof = prove(&evals, &params);
+        let last = proof.final_layer.len() - 1;
+        proof.final_layer[last] = proof.final_layer[last].add(Felt::ONE);
+        assert!(!verify(&params, &proof));
     }
 }
