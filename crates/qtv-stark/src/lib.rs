@@ -4,6 +4,7 @@
 //! prover and verifier interfaces. Every proof rests on hashing alone. There are
 //! no pairings and no elliptic curve operations anywhere in this crate.
 
+pub mod air;
 pub mod field;
 pub mod fri;
 pub mod merkle;
