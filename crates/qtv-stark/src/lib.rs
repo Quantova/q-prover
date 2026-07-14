@@ -5,6 +5,7 @@ pub mod decompose;
 pub mod examples;
 pub mod field;
 pub mod fri;
+pub mod hashing;
 pub mod hint;
 pub mod keccak;
 pub mod lattice;
