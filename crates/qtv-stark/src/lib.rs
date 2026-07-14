@@ -5,6 +5,7 @@
 //! no pairings and no elliptic curve operations anywhere in this crate.
 
 pub mod air;
+pub mod examples;
 pub mod field;
 pub mod fri;
 pub mod merkle;
