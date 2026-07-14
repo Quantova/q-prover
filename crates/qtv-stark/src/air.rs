@@ -58,8 +58,10 @@ pub struct Transition {
     pub degree: usize,
     /// When true the constraint is not enforced on the last row, which is the
     pub exclude_last: bool,
-    /// The closure over the current row and the next row.
-    pub rule: Box<dyn Fn(&[Felt], &[Felt]) -> Felt + Sync>,
+    /// When true the closure reads the transcript challenges and cannot be
+    pub uses_challenges: bool,
+    /// The closure over the current row, the next row, and the challenges.
+    pub rule: Box<dyn Fn(&[Felt], &[Felt], &[Felt]) -> Felt + Sync>,
 }
 
 /// A constraint that pins one cell to a fixed value.
@@ -120,7 +122,8 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: true,
-            rule: Box::new(rule),
+            uses_challenges: false,
+            rule: Box::new(move |current, next, _challenges| rule(current, next)),
         });
     }
 
@@ -132,7 +135,8 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: false,
-            rule: Box::new(move |current, _next| rule(current)),
+            uses_challenges: false,
+            rule: Box::new(move |current, _next, _challenges| rule(current)),
         });
     }
 
@@ -158,10 +162,13 @@ impl Air {
             let current = trace.row(row);
             let next = trace.row((row + 1) % n);
             for constraint in &self.transitions {
+                if constraint.uses_challenges {
+                    continue;
+                }
                 if constraint.exclude_last && row == n - 1 {
                     continue;
                 }
-                if (constraint.rule)(&current, &next) != Felt::ZERO {
+                if (constraint.rule)(&current, &next, &[]) != Felt::ZERO {
                     return false;
                 }
             }

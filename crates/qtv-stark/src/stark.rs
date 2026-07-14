@@ -128,6 +128,7 @@ fn boundary_inverses(point: Felt, boundary_points: &[Felt]) -> Vec<Felt> {
 fn composition_value(
     air: &Air,
     weights: &[Felt],
+    challenges: &[Felt],
     point: Felt,
     last_point: Felt,
     vanishing_inv: Felt,
@@ -138,7 +139,7 @@ fn composition_value(
     let mut acc = Felt::ZERO;
     let mut index = 0;
     for constraint in air.transitions() {
-        let value = (constraint.rule)(current, next);
+        let value = (constraint.rule)(current, next, challenges);
         let quotient = if constraint.exclude_last {
             value.mul(point.sub(last_point)).mul(vanishing_inv)
         } else {
@@ -224,6 +225,7 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         composition[i] = composition_value(
             air,
             &weights,
+            &[],
             point,
             last_point,
             vanishing_inv[i],
@@ -314,6 +316,7 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
         let recomputed_low = composition_value(
             air,
             &weights,
+            &[],
             point_low,
             last_point,
             point_low.pow(domain.n as u64).sub(Felt::ONE).inv(),
@@ -329,6 +332,7 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
         let recomputed_high = composition_value(
             air,
             &weights,
+            &[],
             point_high,
             last_point,
             point_high.pow(domain.n as u64).sub(Felt::ONE).inv(),
