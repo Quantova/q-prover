@@ -17,6 +17,18 @@ pub fn hash_leaf(value: Felt) -> Digest {
     sha3_256(&value.to_u64().to_le_bytes())
 }
 
+/// Hashes a row of field elements into one leaf digest.
+///
+/// The canonical little endian encoding of each element is concatenated in
+/// column order, so a whole trace row commits under a single leaf.
+pub fn hash_row(values: &[Felt]) -> Digest {
+    let mut preimage = Vec::with_capacity(values.len() * 8);
+    for value in values {
+        preimage.extend_from_slice(&value.to_u64().to_le_bytes());
+    }
+    sha3_256(&preimage)
+}
+
 /// A Merkle tree built over a vector of leaf digests.
 pub struct MerkleTree {
     layers: Vec<Vec<Digest>>,
@@ -149,6 +161,15 @@ mod tests {
         let mut proof = tree.open(5);
         proof.siblings[0][0] ^= 1;
         assert!(!verify(&root, &leaves[5], &proof));
+    }
+
+    #[test]
+    fn a_row_leaf_depends_on_every_column() {
+        let base = [Felt::new(1), Felt::new(2), Felt::new(3)];
+        let mut changed = base;
+        changed[1] = Felt::new(9);
+        assert_ne!(hash_row(&base), hash_row(&changed));
+        assert_eq!(hash_row(&base), hash_row(&base));
     }
 
     #[test]
