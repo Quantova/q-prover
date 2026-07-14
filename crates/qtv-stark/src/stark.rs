@@ -211,3 +211,153 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         openings,
     }
 }
+
+/// Checks a proof against the description without the trace.
+pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
+    let domain = Domain::new(air, params);
+    if proof.trace_roots.len() != air.width() {
+        return false;
+    }
+
+    let mut transcript = Transcript::new();
+    for root in &proof.trace_roots {
+        transcript.absorb_digest(root);
+    }
+    let num_constraints = air.transitions().len() + air.boundaries().len();
+    let weights: Vec<Felt> = (0..num_constraints)
+        .map(|_| transcript.challenge_felt())
+        .collect();
+
+    if !fri::verify(&domain.fri_params(params.num_queries), &proof.fri) {
+        return false;
+    }
+    if proof.openings.len() != proof.fri.queries.len() {
+        return false;
+    }
+
+    let half = domain.size / 2;
+    let last_point = domain.last_point();
+    let boundary_points = domain.boundary_points(air);
+
+    for (query, opening) in proof.fri.queries.iter().zip(&proof.openings) {
+        let p = query.position;
+        if p >= half {
+            return false;
+        }
+        let expected = [
+            p,
+            (p + domain.lde_blowup) % domain.size,
+            p + half,
+            (p + half + domain.lde_blowup) % domain.size,
+        ];
+        if opening.rows.len() != expected.len() {
+            return false;
+        }
+        for (row, &index) in opening.rows.iter().zip(expected.iter()) {
+            if row.index != index
+                || row.values.len() != air.width()
+                || row.paths.len() != air.width()
+            {
+                return false;
+            }
+            for column in 0..air.width() {
+                if row.paths[column].leaf_index != index {
+                    return false;
+                }
+                if !crate::merkle::verify(
+                    &proof.trace_roots[column],
+                    &hash_leaf(row.values[column]),
+                    &row.paths[column],
+                ) {
+                    return false;
+                }
+            }
+        }
+
+        let point_low = domain.shift.mul(domain.omega_n.pow(p as u64));
+        let recomputed_low = composition_value(
+            air,
+            &weights,
+            point_low,
+            domain.n,
+            last_point,
+            &boundary_points,
+            &opening.rows[0].values,
+            &opening.rows[1].values,
+        );
+        if recomputed_low != query.layers[0].eval {
+            return false;
+        }
+
+        let point_high = domain.shift.mul(domain.omega_n.pow((p + half) as u64));
+        let recomputed_high = composition_value(
+            air,
+            &weights,
+            point_high,
+            domain.n,
+            last_point,
+            &boundary_points,
+            &opening.rows[2].values,
+            &opening.rows[3].values,
+        );
+        if recomputed_high != query.layers[0].sibling {
+            return false;
+        }
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params() -> StarkParams {
+        StarkParams {
+            lde_blowup: 8,
+            num_queries: 24,
+        }
+    }
+
+    // A squaring chain, the running value squares from one row to the next.
+    fn squaring(length: usize, seed: Felt) -> (Air, TraceTable) {
+        let mut air = Air::new(1, length);
+        air.add_transition(2, |current, next| next[0].sub(current[0].mul(current[0])));
+        air.add_boundary(0, 0, seed);
+        let mut trace = TraceTable::new(1, length);
+        let mut value = seed;
+        for row in 0..length {
+            trace.set(0, row, value);
+            value = value.mul(value);
+        }
+        (air, trace)
+    }
+
+    #[test]
+    fn a_correct_trace_proves_and_verifies() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        assert!(air.is_satisfied(&trace));
+        let proof = prove(&air, &trace, &params());
+        assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_wider_trace_with_two_columns_round_trips() {
+        let length = 32;
+        let mut air = Air::new(2, length);
+        // The first column runs a squaring chain, the second mirrors its square.
+        air.add_transition(2, |current, next| next[0].sub(current[0].mul(current[0])));
+        air.add_single_row(2, |row| row[1].sub(row[0].mul(row[0])));
+        air.add_boundary(0, 0, Felt::new(2));
+        let mut trace = TraceTable::new(2, length);
+        let mut value = Felt::new(2);
+        for row in 0..length {
+            trace.set(0, row, value);
+            trace.set(1, row, value.mul(value));
+            value = value.mul(value);
+        }
+        assert!(air.is_satisfied(&trace));
+        let proof = prove(&air, &trace, &params());
+        assert!(verify(&air, &params(), &proof));
+    }
+}
