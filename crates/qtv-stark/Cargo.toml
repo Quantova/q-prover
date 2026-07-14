@@ -11,3 +11,7 @@ qtv-crypto = { git = "https://github.com/Quantova/Q-Crypto.git", tag = "v0.1.0" 
 [[bench]]
 name = "backend"
 harness = false
+
+[[bench]]
+name = "general"
+harness = false
