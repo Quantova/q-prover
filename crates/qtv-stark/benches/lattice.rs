@@ -1,4 +1,4 @@
-//! Benchmark for the batch machine lattice verification core.
+//! Benchmark for the batch module lattice verification core.
 
 use std::time::Instant;
 

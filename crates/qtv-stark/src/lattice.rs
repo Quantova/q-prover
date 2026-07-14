@@ -1,4 +1,4 @@
-//! Batch verification core for the machine lattice signature.
+//! Batch verification core for the module lattice signature.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
