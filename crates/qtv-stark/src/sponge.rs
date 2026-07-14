@@ -98,13 +98,34 @@ pub fn shake_output(rate: usize, perms: usize, message: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Builds the sponge description over a public single block message and the
-/// public squeeze output. The input block is pinned at the first row and each
-/// squeeze block at the round count row of its segment.
-pub fn shake_air(rate: usize, perms: usize, message: &[u8], output: &[u8]) -> Air {
+/// The rows of one permutation segment.
+pub const SEGMENT_ROWS: usize = SEG_ROWS;
+
+/// The row of a segment squeeze output, the round count row where the rate lanes
+/// carry the squeeze block.
+pub fn squeeze_row(segment: usize) -> usize {
+    segment * SEG_ROWS + KECCAK_ROUNDS
+}
+
+/// The low half lane column of a state lane, the field value carrying the low
+/// thirty two bits, so a fused trace can read a squeeze output word directly.
+pub fn lane_low_col(lane: usize) -> usize {
+    HALF_OFF + 2 * lane
+}
+
+/// Adds the single block sponge squeeze constraints to an air whose keccak block
+/// sits at column zero, so a wider fused trace can carry the sponge as its hashing
+/// band. It adds the block structure, the round and carry transition, and the
+/// selector, round constant, absorb, and squeeze boundaries.
+pub fn add_sponge_constraints(
+    air: &mut Air,
+    rate: usize,
+    perms: usize,
+    message: &[u8],
+    output: &[u8],
+) {
     let rows = perms * SEG_ROWS;
-    let mut air = Air::new(SPONGE_WIDTH, rows);
-    add_block_constraints(&mut air, 0);
+    add_block_constraints(air, 0);
 
     // The combined round and carry transition. On a round row the next state bit
     // is the keccak round output; on a carry row it is the current state bit, so
@@ -160,7 +181,41 @@ pub fn shake_air(rate: usize, perms: usize, message: &[u8], output: &[u8]) -> Ai
             air.add_boundary(hi, out_row, Felt::new(lane >> 32));
         }
     }
+}
 
+/// Fills the sponge columns of a trace over the segments, the state bits, parity,
+/// round constants, half lanes, and the round selector. The trace may be wider than
+/// the sponge, in which case the columns past the sponge belong to other bands.
+pub fn fill_sponge_columns(trace: &mut TraceTable, rate: usize, perms: usize, message: &[u8]) {
+    let (ins, _) = sponge_states(rate, perms, message);
+    let rc = round_constants(SEG_ROWS);
+    for (j, state_in) in ins.iter().enumerate() {
+        let states = keccak_states(state_in, KECCAK_ROUNDS);
+        for r in 0..SEG_ROWS {
+            let global = j * SEG_ROWS + r;
+            let state = if r < KECCAK_ROUNDS {
+                &states[r]
+            } else {
+                &states[KECCAK_ROUNDS]
+            };
+            fill_block_row(trace, 0, global, state, rc[r]);
+            let sel = if r < KECCAK_ROUNDS {
+                Felt::ONE
+            } else {
+                Felt::ZERO
+            };
+            trace.set(SEL_COL, global, sel);
+        }
+    }
+}
+
+/// Builds the sponge description over a public single block message and the
+/// public squeeze output. The input block is pinned at the first row and each
+/// squeeze block at the round count row of its segment.
+pub fn shake_air(rate: usize, perms: usize, message: &[u8], output: &[u8]) -> Air {
+    let rows = perms * SEG_ROWS;
+    let mut air = Air::new(SPONGE_WIDTH, rows);
+    add_sponge_constraints(&mut air, rate, perms, message, output);
     air
 }
 
@@ -177,30 +232,9 @@ pub struct SpongeInstance {
 /// Builds the sponge trace over a single block message and the requested number
 /// of squeeze permutations.
 pub fn shake_trace(rate: usize, perms: usize, message: &[u8]) -> SpongeInstance {
-    let (ins, _) = sponge_states(rate, perms, message);
-    let rc = round_constants(SEG_ROWS);
     let rows = perms * SEG_ROWS;
     let mut trace = TraceTable::new(SPONGE_WIDTH, rows);
-
-    for (j, state_in) in ins.iter().enumerate() {
-        let states = keccak_states(state_in, KECCAK_ROUNDS);
-        for r in 0..SEG_ROWS {
-            let global = j * SEG_ROWS + r;
-            let state = if r < KECCAK_ROUNDS {
-                &states[r]
-            } else {
-                &states[KECCAK_ROUNDS]
-            };
-            fill_block_row(&mut trace, 0, global, state, rc[r]);
-            let sel = if r < KECCAK_ROUNDS {
-                Felt::ONE
-            } else {
-                Felt::ZERO
-            };
-            trace.set(SEL_COL, global, sel);
-        }
-    }
-
+    fill_sponge_columns(&mut trace, rate, perms, message);
     let output = shake_output(rate, perms, message);
     let air = shake_air(rate, perms, message, &output);
     SpongeInstance { air, trace, output }
