@@ -61,15 +61,20 @@ impl TraceTable {
 
 /// A constraint that reads the current row and the following row. The closure
 /// returns zero when the constraint holds. The degree records the algebraic
-/// degree of the closure so the protocol can size the low degree extension.
+/// degree of the closure so the protocol can size the low degree extension. The
+/// third argument carries the transcript challenges, empty for constraints that
+/// do not depend on them.
 pub struct Transition {
     /// The algebraic degree of the closure in the trace cells.
     pub degree: usize,
     /// When true the constraint is not enforced on the last row, which is the
     /// row whose next row wraps around the domain.
     pub exclude_last: bool,
-    /// The closure over the current row and the next row.
-    pub rule: Box<dyn Fn(&[Felt], &[Felt]) -> Felt + Sync>,
+    /// When true the closure reads the transcript challenges and cannot be
+    /// evaluated by the challenge free reference check.
+    pub uses_challenges: bool,
+    /// The closure over the current row, the next row, and the challenges.
+    pub rule: Box<dyn Fn(&[Felt], &[Felt], &[Felt]) -> Felt + Sync>,
 }
 
 /// A constraint that pins one cell to a fixed value.
@@ -132,7 +137,8 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: true,
-            rule: Box::new(rule),
+            uses_challenges: false,
+            rule: Box::new(move |current, next, _challenges| rule(current, next)),
         });
     }
 
@@ -145,7 +151,8 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: false,
-            rule: Box::new(move |current, _next| rule(current)),
+            uses_challenges: false,
+            rule: Box::new(move |current, _next, _challenges| rule(current)),
         });
     }
 
@@ -166,17 +173,22 @@ impl Air {
     }
 
     /// Checks the trace against every constraint directly, without a proof. This
-    /// is the reference the proof protocol must agree with.
+    /// is the reference the proof protocol must agree with. Constraints that read
+    /// the transcript challenges are skipped here; an air that carries them is
+    /// checked through is_satisfied_with instead.
     pub fn is_satisfied(&self, trace: &TraceTable) -> bool {
         let n = self.length;
         for row in 0..n {
             let current = trace.row(row);
             let next = trace.row((row + 1) % n);
             for constraint in &self.transitions {
+                if constraint.uses_challenges {
+                    continue;
+                }
                 if constraint.exclude_last && row == n - 1 {
                     continue;
                 }
-                if (constraint.rule)(&current, &next) != Felt::ZERO {
+                if (constraint.rule)(&current, &next, &[]) != Felt::ZERO {
                     return false;
                 }
             }
