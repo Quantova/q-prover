@@ -13,5 +13,6 @@ pub mod norm;
 pub mod ntt;
 pub mod poly;
 pub mod prover;
+pub mod sponge;
 pub mod stark;
 pub mod verifier;
