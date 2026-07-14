@@ -94,6 +94,24 @@ pub fn eval_at(coeffs: &[Felt], point: Felt) -> Felt {
     acc
 }
 
+/// Inverts a whole vector with one field inversion by the running product
+pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
+    let n = values.len();
+    let mut prefix = vec![Felt::ONE; n];
+    let mut running = Felt::ONE;
+    for i in 0..n {
+        prefix[i] = running;
+        running = running.mul(values[i]);
+    }
+    let mut inverse = running.inv();
+    let mut out = vec![Felt::ZERO; n];
+    for i in (0..n).rev() {
+        out[i] = prefix[i].mul(inverse);
+        inverse = inverse.mul(values[i]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +156,16 @@ mod tests {
         for value in evals {
             assert_eq!(value, eval_at(&coeffs, point));
             point = point.mul(omega);
+        }
+    }
+
+    #[test]
+    fn batch_inverse_matches_pointwise_inverse() {
+        let values: Vec<Felt> = (1..=20u64).map(Felt::new).collect();
+        let inverses = batch_inverse(&values);
+        for (v, i) in values.iter().zip(inverses.iter()) {
+            assert_eq!(v.mul(*i), Felt::ONE);
+            assert_eq!(*i, v.inv());
         }
     }
 

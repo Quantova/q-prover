@@ -91,6 +91,19 @@ impl Domain {
         self.omega_h.pow((self.n - 1) as u64)
     }
 
+    // The transition denominator x to the n minus one at every coset point,
+    // built with the blow up root so no per point exponentiation is needed.
+    fn vanishing_over_coset(&self) -> Vec<Felt> {
+        let zeta = root_of_unity(self.lde_blowup.trailing_zeros());
+        let mut value = self.shift.pow(self.n as u64);
+        let mut out = Vec::with_capacity(self.size);
+        for _ in 0..self.size {
+            out.push(value.sub(Felt::ONE));
+            value = value.mul(zeta);
+        }
+        out
+    }
+
     fn boundary_points(&self, air: &Air) -> Vec<Felt> {
         air.boundaries()
             .iter()
@@ -99,17 +112,29 @@ impl Domain {
     }
 }
 
+// Inverts x minus each boundary point at a single point, for the verifier which
+// only touches a handful of points.
+fn boundary_inverses(point: Felt, boundary_points: &[Felt]) -> Vec<Felt> {
+    boundary_points
+        .iter()
+        .map(|boundary_point| point.sub(*boundary_point).inv())
+        .collect()
+}
+
+// Evaluates the weighted composition at one point. The vanishing inverse is the
+// inverse of the transition denominator x to the n minus one, and the boundary
+// inverses are the inverses of x minus the boundary point, both supplied by the
+// caller so they can be batched.
 fn composition_value(
     air: &Air,
     weights: &[Felt],
     point: Felt,
-    n: usize,
     last_point: Felt,
-    boundary_points: &[Felt],
+    vanishing_inv: Felt,
+    boundary_inv: &[Felt],
     current: &[Felt],
     next: &[Felt],
 ) -> Felt {
-    let vanishing_inv = point.pow(n as u64).sub(Felt::ONE).inv();
     let mut acc = Felt::ZERO;
     let mut index = 0;
     for constraint in air.transitions() {
@@ -122,10 +147,9 @@ fn composition_value(
         acc = acc.add(weights[index].mul(quotient));
         index += 1;
     }
-    for (boundary, boundary_point) in air.boundaries().iter().zip(boundary_points) {
+    for (boundary, inverse) in air.boundaries().iter().zip(boundary_inv) {
         let value = current[boundary.column].sub(boundary.value);
-        let quotient = value.mul(point.sub(*boundary_point).inv());
-        acc = acc.add(weights[index].mul(quotient));
+        acc = acc.add(weights[index].mul(value.mul(*inverse)));
         index += 1;
     }
     acc
@@ -161,19 +185,44 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
 
     let last_point = domain.last_point();
     let boundary_points = domain.boundary_points(air);
+
+    // Precompute the constraint denominators over the coset and invert them all
+    // with one field inversion each.
+    let vanishing_inv = poly::batch_inverse(&domain.vanishing_over_coset());
+    let mut boundary_inv_columns: Vec<Vec<Felt>> = Vec::with_capacity(boundary_points.len());
+    for boundary_point in &boundary_points {
+        let mut denominators = Vec::with_capacity(domain.size);
+        let mut point = domain.shift;
+        for _ in 0..domain.size {
+            denominators.push(point.sub(*boundary_point));
+            point = point.mul(domain.omega_n);
+        }
+        boundary_inv_columns.push(poly::batch_inverse(&denominators));
+    }
+
     let mut composition = vec![Felt::ZERO; domain.size];
+    let mut current = vec![Felt::ZERO; air.width()];
+    let mut next = vec![Felt::ZERO; air.width()];
+    let mut boundary_inv = vec![Felt::ZERO; boundary_points.len()];
     let mut point = domain.shift;
     for i in 0..domain.size {
         let shifted = (i + domain.lde_blowup) % domain.size;
-        let current: Vec<Felt> = column_lde.iter().map(|col| col[i]).collect();
-        let next: Vec<Felt> = column_lde.iter().map(|col| col[shifted]).collect();
+        for (column, cell) in column_lde.iter().zip(current.iter_mut()) {
+            *cell = column[i];
+        }
+        for (column, cell) in column_lde.iter().zip(next.iter_mut()) {
+            *cell = column[shifted];
+        }
+        for (column, cell) in boundary_inv_columns.iter().zip(boundary_inv.iter_mut()) {
+            *cell = column[i];
+        }
         composition[i] = composition_value(
             air,
             &weights,
             point,
-            domain.n,
             last_point,
-            &boundary_points,
+            vanishing_inv[i],
+            &boundary_inv,
             &current,
             &next,
         );
@@ -279,9 +328,9 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
             air,
             &weights,
             point_low,
-            domain.n,
             last_point,
-            &boundary_points,
+            point_low.pow(domain.n as u64).sub(Felt::ONE).inv(),
+            &boundary_inverses(point_low, &boundary_points),
             &opening.rows[0].values,
             &opening.rows[1].values,
         );
@@ -294,9 +343,9 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
             air,
             &weights,
             point_high,
-            domain.n,
             last_point,
-            &boundary_points,
+            point_high.pow(domain.n as u64).sub(Felt::ONE).inv(),
+            &boundary_inverses(point_high, &boundary_points),
             &opening.rows[2].values,
             &opening.rows[3].values,
         );
