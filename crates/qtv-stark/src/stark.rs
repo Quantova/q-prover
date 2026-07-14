@@ -358,6 +358,52 @@ mod tests {
     }
 
     #[test]
+    fn a_trace_that_breaks_a_transition_is_rejected() {
+        let (air, mut trace) = squaring(16, Felt::new(3));
+        trace.set(0, 7, trace.get(0, 7).add(Felt::ONE));
+        assert!(!air.is_satisfied(&trace));
+        let proof = prove(&air, &trace, &params());
+        assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_trace_that_breaks_a_boundary_is_rejected() {
+        let (air, _) = squaring(16, Felt::new(3));
+        // A trace of the same shape whose seed is wrong.
+        let (_, wrong) = squaring(16, Felt::new(5));
+        assert!(!air.is_satisfied(&wrong));
+        let proof = prove(&air, &wrong, &params());
+        assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_tampered_trace_opening_is_rejected() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        let mut proof = prove(&air, &trace, &params());
+        let cell = proof.openings[0].rows[0].values[0];
+        proof.openings[0].rows[0].values[0] = cell.add(Felt::ONE);
+        assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_tampered_trace_root_is_rejected() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        let mut proof = prove(&air, &trace, &params());
+        proof.trace_roots[0][0] ^= 1;
+        assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_verifier_with_a_different_boundary_rejects() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        let proof = prove(&air, &trace, &params());
+        let mut other = Air::new(1, 16);
+        other.add_transition(2, |current, next| next[0].sub(current[0].mul(current[0])));
+        other.add_boundary(0, 0, Felt::new(9));
+        assert!(!verify(&other, &params(), &proof));
+    }
+
+    #[test]
     fn a_wider_trace_with_two_columns_round_trips() {
         let length = 32;
         let mut air = Air::new(2, length);
