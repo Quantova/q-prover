@@ -1,7 +1,15 @@
 //! Merkle commitments for the hash based STARK backend.
 
+use crate::field::Felt;
+use qtv_crypto::sha3::sha3_256;
+
 /// A thirty two byte commitment digest.
 pub type Digest = [u8; 32];
+
+/// Hashes a single field element into a leaf digest.
+pub fn hash_leaf(value: Felt) -> Digest {
+    sha3_256(&value.to_u64().to_le_bytes())
+}
 
 /// A Merkle tree built over a vector of leaf digests.
 pub struct MerkleTree {
@@ -89,11 +97,60 @@ pub fn verify(root: &Digest, leaf: &Digest, proof: &MerkleProof) -> bool {
     &acc == root
 }
 
-/// Combines two child digests into a parent digest.
+/// Combines two child digests into a parent digest with SHA3 256.
 fn hash_pair(left: &Digest, right: &Digest) -> Digest {
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        out[i] = left[i] ^ right[i].rotate_left(1);
+    let mut preimage = [0u8; 64];
+    preimage[..32].copy_from_slice(left);
+    preimage[32..].copy_from_slice(right);
+    sha3_256(&preimage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn leaves(count: usize) -> Vec<Digest> {
+        (0..count).map(|i| hash_leaf(Felt::new(i as u64))).collect()
     }
-    out
+
+    #[test]
+    fn inclusion_proof_verifies_for_every_leaf() {
+        let leaves = leaves(8);
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        for (index, leaf) in leaves.iter().enumerate() {
+            let proof = tree.open(index);
+            assert_eq!(proof.leaf_index, index);
+            assert!(verify(&root, leaf, &proof));
+        }
+    }
+
+    #[test]
+    fn a_tampered_leaf_is_rejected() {
+        let leaves = leaves(8);
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        let proof = tree.open(3);
+        let forged = hash_leaf(Felt::new(999));
+        assert!(!verify(&root, &forged, &proof));
+    }
+
+    #[test]
+    fn a_tampered_path_is_rejected() {
+        let leaves = leaves(8);
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        let mut proof = tree.open(5);
+        proof.siblings[0][0] ^= 1;
+        assert!(!verify(&root, &leaves[5], &proof));
+    }
+
+    #[test]
+    fn a_proof_from_a_different_position_is_rejected() {
+        let leaves = leaves(8);
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        let proof = tree.open(2);
+        assert!(!verify(&root, &leaves[6], &proof));
+    }
 }
