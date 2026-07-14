@@ -6,4 +6,5 @@ pub mod fri;
 pub mod merkle;
 pub mod poly;
 pub mod prover;
+pub mod stark;
 pub mod verifier;
