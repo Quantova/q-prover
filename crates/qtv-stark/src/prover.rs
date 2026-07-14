@@ -1,32 +1,56 @@
 //! The proving interface for the hash based STARK backend.
 
 use crate::field::Felt;
-use crate::merkle::Digest;
+use crate::fri::{prove as fri_prove, FriParams};
 
-/// A statement to be proven, given by its public inputs.
+/// A proof that a committed evaluation vector is close to a low degree
+pub use crate::fri::FriProof as Proof;
+
+/// The public part of the low degree statement.
 pub struct PublicInputs {
-    /// The public field elements that fix the statement.
-    pub values: Vec<Felt>,
+    /// The FRI schedule the proof commits to.
+    pub params: FriParams,
 }
 
-/// A witness holding the private execution trace.
+/// A witness holding the evaluation vector under test.
 pub struct Witness {
-    /// The private trace that satisfies the statement.
+    /// The evaluations over the initial domain.
     pub trace: Vec<Felt>,
-}
-
-/// A proof carrying the commitments and the query openings.
-pub struct Proof {
-    /// The commitment root over the execution trace.
-    pub trace_root: Digest,
-    /// The commitment roots produced by each FRI round.
-    pub fri_roots: Vec<Digest>,
-    /// The field elements revealed at the sampled query positions.
-    pub openings: Vec<Felt>,
 }
 
 /// The prover binds a witness to public inputs and emits a proof.
 pub trait Prover {
     /// Produces a proof for the given statement and witness.
     fn prove(&self, public: &PublicInputs, witness: &Witness) -> Proof;
+}
+
+/// The FRI backed low degree prover.
+pub struct LowDegreeProver;
+
+impl Prover for LowDegreeProver {
+    fn prove(&self, public: &PublicInputs, witness: &Witness) -> Proof {
+        fri_prove(&witness.trace, &public.params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_prover_emits_a_proof_over_the_full_domain() {
+        let params = FriParams {
+            log_domain_size: 8,
+            num_queries: 8,
+            blowup: 4,
+        };
+        let trace = vec![Felt::new(3); params.domain_size()];
+        let public = PublicInputs {
+            params: params.clone(),
+        };
+        let witness = Witness { trace };
+        let proof = LowDegreeProver.prove(&public, &witness);
+        assert_eq!(proof.layer_roots.len(), params.rounds());
+        assert_eq!(proof.queries.len(), params.num_queries);
+    }
 }
