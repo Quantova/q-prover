@@ -40,8 +40,13 @@ fn main() {
     };
     let message = b"quantova fused certificate batch";
     let hints: Vec<u64> = (0..perms as u64).map(|i| i & 1).collect();
+    // In bound member responses, one per segment, standing in for the response
+    // coefficients decoded from the member signatures.
+    let responses: Vec<u64> = (0..perms as u64)
+        .map(|i| (i * 40_009 + 1) % 500_000)
+        .collect();
 
-    let cert = certificate_trace(perms, message, &hints);
+    let cert = certificate_trace(perms, message, &hints, &responses);
 
     let prove_iters = 3;
     let start = Instant::now();
@@ -80,19 +85,35 @@ fn main() {
     println!("verification time {:?}", verify_time);
     println!("accepted {}", accepted);
     println!();
-    println!("one certificate covers the SHAKE256 hashing band and the arithmetic band");
+    println!("one certificate covers the SHAKE256 hashing band and the signature arithmetic band");
     println!("bound on each squeeze row, the reduction input equals the squeeze word, and the");
-    println!("permutation binds the reduced coefficient to the decomposition and the hint");
-    println!("recovery, so the hash output the arithmetic consumes cannot be split from it");
+    println!("permutation binds the reduced coefficient to the decomposition, the hint recovery,");
+    println!(
+        "and the first factor of the matrix vector product, while a further permutation binds"
+    );
+    println!(
+        "the product's second factor to the coefficient the response norm bounds, so the hash"
+    );
+    println!("to matrix coefficient to product to response to norm chain cannot be split");
+    println!();
+    println!("now inside the fused certificate, over the hash derived coefficients:");
+    println!("  the transform domain matrix vector product of the coefficient with the response");
+    println!("  the response infinity norm over the response the product multiplies");
+    println!("  the canonical reduction, the commitment decomposition, and the hint recovery");
     println!();
     println!("still outside this certificate:");
     println!("  the batch is sixteen hash derived coefficients, one squeeze word per segment;");
     println!("  scaling to the full per signature coefficient count widens the arithmetic band");
     println!("  but keeps the shape");
-    println!("  the modular multiplication and the response norm bands consume the transform");
-    println!("  outputs and the response, which are not products of this hash, so they join the");
-    println!("  arithmetic certificate without a hash binding");
-    println!("  the squeeze word reduces modulo the modulus here; the faithful rejection");
-    println!("  sampling of the matrix expansion is arithmetized in the sample module and binds");
-    println!("  the same way");
+    println!("  the hash derived coefficient is not reconstructed to the member matrix expansion,");
+    println!(
+        "  the decoded response, and the public key t1; the full verify equation closure, the"
+    );
+    println!(
+        "  ExpandA rejection sampling to transform chain, the SampleInBall challenge, and the"
+    );
+    println!(
+        "  multi block transcript absorb stay arithmetized in the sample, ntt, challenge ball,"
+    );
+    println!("  and sponge modules but are not fused here");
 }

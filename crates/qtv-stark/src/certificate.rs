@@ -1,10 +1,10 @@
-//! The fused certificate over the hashing and the per coefficient arithmetic.
+//! The fused certificate over the hashing and the per member signature verify
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::{Q, RESIDUE_BITS};
 use crate::sponge::{lane_low_col, squeeze_row, SHAKE256_RATE, SPONGE_WIDTH};
-use crate::{decompose, hint, sponge};
+use crate::{decompose, hint, lattice, norm, sponge};
 
 const QUO_BITS: usize = 10;
 
@@ -22,8 +22,12 @@ const REDUCE_WIDTH: usize = 3 + QUO_BITS + 2 * RESIDUE_BITS;
 pub const DECOMPOSE_BASE: usize = REDUCE_BASE + REDUCE_WIDTH;
 /// The column base of the hint recovery band.
 pub const HINT_BASE: usize = DECOMPOSE_BASE + decompose::WIDTH;
+/// The column base of the transform domain matrix vector product band.
+pub const MODMUL_BASE: usize = HINT_BASE + hint::WIDTH;
+/// The column base of the response infinity norm band.
+pub const NORM_BASE: usize = MODMUL_BASE + lattice::WIDTH;
 /// The full base column width of the fused certificate.
-pub const CERT_WIDTH: usize = HINT_BASE + hint::WIDTH;
+pub const CERT_WIDTH: usize = NORM_BASE + norm::WIDTH;
 
 fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     let two = Felt::new(2);
@@ -87,15 +91,27 @@ pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
         }
     }
 
-    // The per coefficient pieces over the reduced coefficient.
+    // The per coefficient signature verify pieces over the reduced coefficient:
+    // the commitment decomposition, the hint recovery, the transform domain matrix
+    // vector product, and the response infinity norm.
     decompose::add_constraints(&mut air, DECOMPOSE_BASE);
     hint::add_constraints(&mut air, HINT_BASE);
+    lattice::add_constraints(&mut air, MODMUL_BASE);
+    norm::add_constraints(&mut air, NORM_BASE);
 
-    // The permutation binds the reduced coefficient to the decomposition input and
-    // to the hint recovery input, so both pieces act on the hash derived value.
+    // One transcript challenge drives every binding permutation. Each binds one
+    // multiset of trace cells to another so a value written in one band is the
+    // value consumed in another.
     let gamma = air.add_challenge();
     let dec_r = DECOMPOSE_BASE + decompose::COL_R;
     let hint_r = HINT_BASE + hint::COL_R;
+    let mm_a = MODMUL_BASE + lattice::COL_A;
+    let mm_b = MODMUL_BASE + lattice::COL_B;
+    let norm_z = NORM_BASE + norm::COL_Z;
+
+    // The reduced coefficient is the decomposition input, the hint recovery input,
+    // and the matrix coefficient the product multiplies, so all three pieces act on
+    // the hash derived value.
     air.add_permutation(
         1,
         move |row, ch| ch[gamma].sub(row[R_R]),
@@ -105,6 +121,19 @@ pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
         1,
         move |row, ch| ch[gamma].sub(row[R_R]),
         move |row, ch| ch[gamma].sub(row[hint_r]),
+    );
+    air.add_permutation(
+        1,
+        move |row, ch| ch[gamma].sub(row[R_R]),
+        move |row, ch| ch[gamma].sub(row[mm_a]),
+    );
+
+    // The second factor of the product is the response the norm band bounds, so the
+    // response the product multiplies is exactly the one proved small.
+    air.add_permutation(
+        1,
+        move |row, ch| ch[gamma].sub(row[mm_b]),
+        move |row, ch| ch[gamma].sub(row[norm_z]),
     );
 
     air
@@ -131,7 +160,12 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
 }
 
 /// Lays out the fused trace. The sponge squeezes the message for the given number
-pub fn certificate_trace(perms: usize, message: &[u8], hints: &[u64]) -> Certificate {
+pub fn certificate_trace(
+    perms: usize,
+    message: &[u8],
+    hints: &[u64],
+    responses: &[u64],
+) -> Certificate {
     let rows = perms * sponge::SEGMENT_ROWS;
     let mut trace = TraceTable::new(CERT_WIDTH, rows);
     sponge::fill_sponge_columns(&mut trace, SHAKE256_RATE, perms, message);
@@ -160,8 +194,19 @@ pub fn certificate_trace(perms: usize, message: &[u8], hints: &[u64]) -> Certifi
         } else {
             0
         };
+        // The response coefficient this segment carries, zero off a squeeze row so
+        // the product and the norm are the trivial zero relation there.
+        let z = if sq != usize::MAX {
+            responses.get(sq).copied().unwrap_or(0) % Q
+        } else {
+            0
+        };
         decompose::fill_row(&mut trace, DECOMPOSE_BASE, row, r);
         hint::fill_row(&mut trace, HINT_BASE, row, r, h);
+        // The matrix vector product of the hash derived coefficient with the
+        // response, and the response norm over the same response.
+        lattice::fill_row(&mut trace, MODMUL_BASE, row, r, z);
+        norm::fill_row(&mut trace, NORM_BASE, row, z);
     }
 
     let output = sponge::shake_output(SHAKE256_RATE, perms, message);
@@ -191,9 +236,15 @@ mod tests {
         [Felt::new(0x1234_5678_9abc)]
     }
 
+    // Two responses inside the ML DSA 65 response bound, one small positive and one
+    // the negative representative below the modulus, so the norm band holds.
+    fn responses() -> Vec<u64> {
+        vec![12_345, Q - 6_789]
+    }
+
     fn sample() -> Certificate {
         let hints: Vec<u64> = (0..8u64).map(|i| i & 1).collect();
-        certificate_trace(2, b"module lattice fused certificate", &hints)
+        certificate_trace(2, b"module lattice fused certificate", &hints, &responses())
     }
 
     #[test]
@@ -253,5 +304,44 @@ mod tests {
         wrong[0] ^= 1;
         let air = certificate_air(2, b"module lattice fused certificate", &wrong);
         assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn the_product_multiplies_the_hash_coefficient_by_the_response() {
+        // On each squeeze row the product's first factor is the hash derived
+        // coefficient and its residue is that coefficient times the response.
+        let cert = sample();
+        for j in 0..cert.coefficients.len() {
+            let row = squeeze_row(j);
+            let a = cert.trace.get(MODMUL_BASE + lattice::COL_A, row).to_u64();
+            let r = cert.trace.get(R_R, row).to_u64();
+            let b = cert.trace.get(MODMUL_BASE + lattice::COL_B, row).to_u64();
+            let product = cert.trace.get(MODMUL_BASE + lattice::COL_R, row).to_u64();
+            assert_eq!(a, r);
+            assert_eq!(product, ((a as u128 * b as u128) % Q as u128) as u64);
+        }
+    }
+
+    #[test]
+    fn an_out_of_bound_response_has_no_satisfying_trace() {
+        // A response at the modulus over two is as far from zero as a coefficient
+        // reaches, well outside the response bound, so the norm band cannot hold and
+        // the fused trace has no satisfying assignment.
+        let hints: Vec<u64> = (0..8u64).map(|i| i & 1).collect();
+        let cert = certificate_trace(2, b"module lattice fused certificate", &hints, &[Q / 2, 3]);
+        assert!(!cert.air.is_satisfied_with(&cert.trace, &challenges()));
+    }
+
+    #[test]
+    fn a_split_response_breaks_the_binding() {
+        // Feed the product a second factor other than the response the norm bounds.
+        // The permutation binding the product factor to the norm input can no longer
+        // close.
+        let cert = sample();
+        let mut trace = cert.trace;
+        let mm_b = MODMUL_BASE + lattice::COL_B;
+        let row = squeeze_row(0);
+        trace.set(mm_b, row, trace.get(mm_b, row).add(Felt::new(7)));
+        assert!(!cert.air.is_satisfied_with(&trace, &challenges()));
     }
 }

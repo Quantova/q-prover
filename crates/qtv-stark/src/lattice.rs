@@ -35,8 +35,10 @@ pub fn signature_batch_workload(signatures: usize, seed: u64) -> Vec<(u64, u64)>
         .collect()
 }
 
-const COL_A: usize = 0;
-const COL_B: usize = 1;
+/// The first factor column, relative to the piece base. In the transform domain
+pub const COL_A: usize = 0;
+/// The second factor column, relative to the piece base. In the matrix vector
+pub const COL_B: usize = 1;
 
 /// The product residue column, relative to the piece base.
 pub const COL_R: usize = 2;

@@ -4,6 +4,7 @@ use qtv_crypto::sha3::shake256;
 
 use crate::certificate::{certificate_air, certificate_trace};
 use crate::codec::{decode_proof, encode_proof};
+use crate::norm::NORM_BOUND;
 use crate::sponge::{shake_output, SHAKE256_RATE};
 use crate::stark::{prove, verify, StarkParams};
 
@@ -33,6 +34,26 @@ fn derive_hints(message: &[u8], segments: usize) -> Vec<u64> {
     bits.iter().map(|b| (*b & 1) as u64).collect()
 }
 
+// The stand in member responses, one per segment, when the caller supplies none.
+// Each is derived from the message and reduced below the response bound, so the
+// norm band holds and the certificate still exercises the matrix vector product
+// and the norm over non trivial values.
+fn derive_responses(message: &[u8], segments: usize) -> Vec<u64> {
+    let mut bytes = vec![0u8; segments.max(1) * 4];
+    shake256(message, &mut bytes);
+    (0..segments.max(1))
+        .map(|i| {
+            let word = u32::from_le_bytes([
+                bytes[4 * i],
+                bytes[4 * i + 1],
+                bytes[4 * i + 2],
+                bytes[4 * i + 3],
+            ]);
+            (word as u64) % NORM_BOUND
+        })
+        .collect()
+}
+
 /// A self contained batch certificate: the segment count and the serialized
 #[derive(Clone)]
 pub struct BatchProof {
@@ -42,15 +63,22 @@ pub struct BatchProof {
     pub proof: Vec<u8>,
 }
 
-/// Proves the fused certificate over a public message and returns a batch
-pub fn prove_batch(message: &[u8], segments: usize) -> BatchProof {
+/// Proves the fused certificate over a public message and the member responses,
+pub fn prove_batch(message: &[u8], segments: usize, responses: &[u64]) -> BatchProof {
     assert!(
         message.len() <= MAX_MESSAGE_BYTES,
         "message must fit one SHAKE256 rate block"
     );
     assert!(segments >= 1, "a certificate needs at least one segment");
     let hints = derive_hints(message, segments);
-    let cert = certificate_trace(segments, message, &hints);
+    let derived;
+    let responses = if responses.is_empty() {
+        derived = derive_responses(message, segments);
+        &derived[..]
+    } else {
+        responses
+    };
+    let cert = certificate_trace(segments, message, &hints, responses);
     let proof = prove(&cert.air, &cert.trace, &params());
     BatchProof {
         segments,
@@ -107,20 +135,30 @@ mod tests {
     #[test]
     fn a_batch_certificate_proves_and_verifies() {
         let message = b"module lattice batch entry point";
-        let cert = prove_batch(message, 2);
+        let cert = prove_batch(message, 2, &[]);
         assert!(verify_batch(message, &cert));
     }
 
     #[test]
     fn a_certificate_over_a_different_message_is_rejected() {
-        let cert = prove_batch(b"the message it was proven over", 2);
+        let cert = prove_batch(b"the message it was proven over", 2, &[]);
         assert!(!verify_batch(b"a different message entirely!!!!", &cert));
+    }
+
+    #[test]
+    fn a_certificate_over_supplied_responses_verifies() {
+        // Supplied member responses, one small positive and one negative
+        // representative below the modulus, both inside the response bound.
+        let message = b"real member responses batch cert";
+        let responses = [12_345u64, crate::lattice::Q - 6_789];
+        let cert = prove_batch(message, 2, &responses);
+        assert!(verify_batch(message, &cert));
     }
 
     #[test]
     fn a_certificate_round_trips_through_bytes() {
         let message = b"round trip the batch certificate";
-        let cert = prove_batch(message, 2);
+        let cert = prove_batch(message, 2, &[]);
         let bytes = cert.to_bytes();
         let restored = BatchProof::from_bytes(&bytes).expect("from_bytes");
         assert_eq!(restored.segments, cert.segments);
@@ -131,7 +169,7 @@ mod tests {
     #[test]
     fn a_wrong_segment_count_is_rejected() {
         let message = b"segment count must match the proof";
-        let mut cert = prove_batch(message, 2);
+        let mut cert = prove_batch(message, 2, &[]);
         cert.segments = 4;
         assert!(!verify_batch(message, &cert));
     }
