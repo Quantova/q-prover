@@ -229,7 +229,8 @@ mod tests {
 
     fn sample_proof() -> (crate::air::Air, StarkProof) {
         let hints: Vec<u64> = (0..2u64).map(|i| i & 1).collect();
-        let cert = certificate_trace(2, b"module lattice codec round trip", &hints);
+        let responses = [11_111u64, 22_222];
+        let cert = certificate_trace(2, b"module lattice codec round trip", &hints, &responses);
         let proof = prove(&cert.air, &cert.trace, &params());
         let air = crate::certificate::certificate_air(
             2,
