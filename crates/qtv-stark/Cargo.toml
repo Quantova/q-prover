@@ -45,6 +45,10 @@ name = "sampling"
 harness = false
 
 [[bench]]
+name = "signing"
+harness = false
+
+[[bench]]
 name = "sponge"
 harness = false
 
