@@ -25,6 +25,7 @@ pub mod ntt;
 pub mod poly;
 pub mod prover;
 pub mod sample;
+pub mod signing;
 pub mod sponge;
 pub mod stark;
 pub mod verifier;
