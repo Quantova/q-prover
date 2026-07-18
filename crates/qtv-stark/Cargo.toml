@@ -33,7 +33,7 @@ name = "hashing"
 harness = false
 
 [[bench]]
-name = "keccak"
+name = "qudros"
 harness = false
 
 [[bench]]

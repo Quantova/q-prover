@@ -93,13 +93,13 @@ fn main() {
     };
 
     // The transform domain modular multiplications of the matrix vector product.
-    let modmul_work = signature_batch_workload(signatures, 0x5eed);
+    let modmul_work = signature_batch_workload(signatures, 24301);
     let modmul = modmul_batch(&modmul_work);
     let modmul_len = modmul.trace.length();
 
     // The response coefficients for the infinity norm check, one ring per matrix
     // column and signature.
-    let mut state = 0xa1b2u64 | 1;
+    let mut state = 41394u64 | 1;
     let norm_count = signatures * MATRIX_COLS * RING_DEGREE;
     let norm_work: Vec<u64> = (0..norm_count)
         .map(|_| {

@@ -1,12 +1,12 @@
-//! The SHAKE sponge over the arithmetized Keccak permutation.
+//! The SHAKE sponge over the arithmetized Qudros permutation.
 
 use std::sync::Arc;
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
-use crate::keccak::{
-    add_block_constraints, fill_block_row, keccak_f1600, keccak_states, round_bit, round_constants,
-    s_idx, HALF_OFF, KECCAK_ROUNDS, KECCAK_TRACE_ROWS, KECCAK_WIDTH, LANES, LANE_BITS, RCHALF_OFF,
+use crate::qudros::{
+    add_block_constraints, fill_block_row, qudros_f1600, qudros_states, round_bit, round_constants,
+    s_idx, HALF_OFF, QUDROS_ROUNDS, QUDROS_TRACE_ROWS, QUDROS_WIDTH, LANES, LANE_BITS, RCHALF_OFF,
 };
 
 /// The byte rate of SHAKE128.
@@ -16,13 +16,13 @@ pub const SHAKE128_RATE: usize = 168;
 pub const SHAKE256_RATE: usize = 136;
 
 /// The SHAKE domain separation byte of the FIPS 202 padding.
-pub const SHAKE_DOMAIN: u8 = 0x1f;
+pub const SHAKE_DOMAIN: u8 = 31;
 
-const SEG_ROWS: usize = KECCAK_TRACE_ROWS;
-const SEL_COL: usize = KECCAK_WIDTH;
+const SEG_ROWS: usize = QUDROS_TRACE_ROWS;
+const SEL_COL: usize = QUDROS_WIDTH;
 
-/// The full column width of the sponge trace, one keccak block plus the round
-pub const SPONGE_WIDTH: usize = KECCAK_WIDTH + 1;
+/// The full column width of the sponge trace, one qudros block plus the round
+pub const SPONGE_WIDTH: usize = QUDROS_WIDTH + 1;
 
 fn block_to_lanes(block: &[u8]) -> [u64; LANES] {
     let mut lanes = [0u64; LANES];
@@ -46,7 +46,7 @@ fn padded_block(rate: usize, message: &[u8]) -> Vec<u8> {
     let mut block = vec![0u8; rate];
     block[..message.len()].copy_from_slice(message);
     block[message.len()] ^= SHAKE_DOMAIN;
-    block[rate - 1] ^= 0x80;
+    block[rate - 1] ^= 128;
     block
 }
 
@@ -63,7 +63,7 @@ fn sponge_states(
     let mut state = input;
     for _ in 0..perms {
         ins.push(state);
-        let out = keccak_f1600(&state);
+        let out = qudros_f1600(&state);
         outs.push(out);
         state = out;
     }
@@ -87,7 +87,7 @@ pub const SEGMENT_ROWS: usize = SEG_ROWS;
 
 /// The row of a segment squeeze output, the round count row where the rate lanes
 pub fn squeeze_row(segment: usize) -> usize {
-    segment * SEG_ROWS + KECCAK_ROUNDS
+    segment * SEG_ROWS + QUDROS_ROUNDS
 }
 
 /// The low half lane column of a state lane, the field value carrying the low
@@ -95,7 +95,7 @@ pub fn lane_low_col(lane: usize) -> usize {
     HALF_OFF + 2 * lane
 }
 
-/// Adds the single block sponge squeeze constraints to an air whose keccak block
+/// Adds the single block sponge squeeze constraints to an air whose qudros block
 pub fn add_sponge_constraints(
     air: &mut Air,
     rate: usize,
@@ -107,7 +107,7 @@ pub fn add_sponge_constraints(
     add_block_constraints(air, 0);
 
     // The combined round and carry transition. On a round row the next state bit
-    // is the keccak round output; on a carry row it is the current state bit, so
+    // is the qudros round output; on a carry row it is the current state bit, so
     // the output of one permutation flows into the input of the next.
     for x in 0..5 {
         for y in 0..5 {
@@ -129,13 +129,13 @@ pub fn add_sponge_constraints(
     let rc = round_constants(SEG_ROWS);
     for global in 0..rows {
         let r = global % SEG_ROWS;
-        let sel = if r < KECCAK_ROUNDS {
+        let sel = if r < QUDROS_ROUNDS {
             Felt::ONE
         } else {
             Felt::ZERO
         };
         air.add_boundary(SEL_COL, global, sel);
-        air.add_boundary(RCHALF_OFF, global, Felt::new(rc[r] & 0xffff_ffff));
+        air.add_boundary(RCHALF_OFF, global, Felt::new(rc[r] & 4294967295));
         air.add_boundary(RCHALF_OFF + 1, global, Felt::new(rc[r] >> 32));
     }
 
@@ -144,19 +144,19 @@ pub fn add_sponge_constraints(
     for l in 0..LANES {
         let lo = HALF_OFF + 2 * l;
         let hi = HALF_OFF + 2 * l + 1;
-        air.add_boundary(lo, 0, Felt::new(input[l] & 0xffff_ffff));
+        air.add_boundary(lo, 0, Felt::new(input[l] & 4294967295));
         air.add_boundary(hi, 0, Felt::new(input[l] >> 32));
     }
 
     // The squeeze blocks, the rate lanes at the round count row of each segment.
     let rate_lanes = rate / 8;
     for j in 0..perms {
-        let out_row = j * SEG_ROWS + KECCAK_ROUNDS;
+        let out_row = j * SEG_ROWS + QUDROS_ROUNDS;
         for l in 0..rate_lanes {
             let lane = bytes_to_lane(&output[j * rate + l * 8..j * rate + l * 8 + 8]);
             let lo = HALF_OFF + 2 * l;
             let hi = HALF_OFF + 2 * l + 1;
-            air.add_boundary(lo, out_row, Felt::new(lane & 0xffff_ffff));
+            air.add_boundary(lo, out_row, Felt::new(lane & 4294967295));
             air.add_boundary(hi, out_row, Felt::new(lane >> 32));
         }
     }
@@ -167,16 +167,16 @@ pub fn fill_sponge_columns(trace: &mut TraceTable, rate: usize, perms: usize, me
     let (ins, _) = sponge_states(rate, perms, message);
     let rc = round_constants(SEG_ROWS);
     for (j, state_in) in ins.iter().enumerate() {
-        let states = keccak_states(state_in, KECCAK_ROUNDS);
+        let states = qudros_states(state_in, QUDROS_ROUNDS);
         for r in 0..SEG_ROWS {
             let global = j * SEG_ROWS + r;
-            let state = if r < KECCAK_ROUNDS {
+            let state = if r < QUDROS_ROUNDS {
                 &states[r]
             } else {
-                &states[KECCAK_ROUNDS]
+                &states[QUDROS_ROUNDS]
             };
             fill_block_row(trace, 0, global, state, rc[r]);
-            let sel = if r < KECCAK_ROUNDS {
+            let sel = if r < QUDROS_ROUNDS {
                 Felt::ONE
             } else {
                 Felt::ZERO
@@ -233,7 +233,7 @@ fn absorb_blocks(rate: usize, message: &[u8]) -> Vec<[u64; LANES]> {
     let mut last = vec![0u8; rate];
     last[..rem].copy_from_slice(&message[i..]);
     last[rem] ^= SHAKE_DOMAIN;
-    last[rate - 1] ^= 0x80;
+    last[rate - 1] ^= 128;
     blocks.push(block_to_lanes(&last));
     blocks
 }
@@ -251,7 +251,7 @@ fn absorb_states(rate: usize, message: &[u8], segments: usize) -> Vec<[u64; LANE
     let mut state = blocks[0];
     for j in 0..segments {
         states.push(state);
-        let out = keccak_f1600(&state);
+        let out = qudros_f1600(&state);
         if j + 1 < nblocks {
             let mut next = out;
             for l in 0..rl {
@@ -279,7 +279,7 @@ pub fn absorb_segments(rate: usize, message: &[u8]) -> usize {
 pub fn absorb_output(rate: usize, message: &[u8]) -> Vec<u8> {
     let nblocks = absorb_block_count(rate, message);
     let states = absorb_states(rate, message, nblocks);
-    let out = keccak_f1600(&states[nblocks - 1]);
+    let out = qudros_f1600(&states[nblocks - 1]);
     let mut bytes = Vec::with_capacity(rate);
     for l in 0..rate_lanes(rate) {
         bytes.extend_from_slice(&out[l].to_le_bytes());
@@ -342,13 +342,13 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
     let rc = round_constants(SEG_ROWS);
     for global in 0..rows {
         let r = global % SEG_ROWS;
-        let sel = if r < KECCAK_ROUNDS {
+        let sel = if r < QUDROS_ROUNDS {
             Felt::ONE
         } else {
             Felt::ZERO
         };
         air.add_boundary(SEL_COL, global, sel);
-        air.add_boundary(RCHALF_OFF, global, Felt::new(rc[r] & 0xffff_ffff));
+        air.add_boundary(RCHALF_OFF, global, Felt::new(rc[r] & 4294967295));
         air.add_boundary(RCHALF_OFF + 1, global, Felt::new(rc[r] >> 32));
     }
 
@@ -367,18 +367,18 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
     for l in 0..LANES {
         let lo = HALF_OFF + 2 * l;
         let hi = HALF_OFF + 2 * l + 1;
-        air.add_boundary(lo, 0, Felt::new(first[l] & 0xffff_ffff));
+        air.add_boundary(lo, 0, Felt::new(first[l] & 4294967295));
         air.add_boundary(hi, 0, Felt::new(first[l] >> 32));
     }
 
     // The first squeeze block, the rate lanes at the round count row of the last
     // segment.
-    let out_row = (nblocks - 1) * SEG_ROWS + KECCAK_ROUNDS;
+    let out_row = (nblocks - 1) * SEG_ROWS + QUDROS_ROUNDS;
     for l in 0..rl {
         let lane = bytes_to_lane(&output[l * 8..l * 8 + 8]);
         let lo = HALF_OFF + 2 * l;
         let hi = HALF_OFF + 2 * l + 1;
-        air.add_boundary(lo, out_row, Felt::new(lane & 0xffff_ffff));
+        air.add_boundary(lo, out_row, Felt::new(lane & 4294967295));
         air.add_boundary(hi, out_row, Felt::new(lane >> 32));
     }
 
@@ -406,16 +406,16 @@ pub fn absorb_trace(rate: usize, message: &[u8]) -> AbsorbInstance {
     let mut trace = TraceTable::new(width, rows);
 
     for (j, state_in) in states.iter().enumerate() {
-        let seg_states = keccak_states(state_in, KECCAK_ROUNDS);
+        let seg_states = qudros_states(state_in, QUDROS_ROUNDS);
         for r in 0..SEG_ROWS {
             let global = j * SEG_ROWS + r;
-            let state = if r < KECCAK_ROUNDS {
+            let state = if r < QUDROS_ROUNDS {
                 &seg_states[r]
             } else {
-                &seg_states[KECCAK_ROUNDS]
+                &seg_states[QUDROS_ROUNDS]
             };
             fill_block_row(&mut trace, 0, global, state, rc[r]);
-            let sel = if r < KECCAK_ROUNDS {
+            let sel = if r < QUDROS_ROUNDS {
                 Felt::ONE
             } else {
                 Felt::ZERO
@@ -546,7 +546,7 @@ mod tests {
         let cell = instance.trace.get(11, SEG_ROWS + 3);
         instance
             .trace
-            .set(11, SEG_ROWS + 3, crate::keccak::xor2(cell, Felt::ONE));
+            .set(11, SEG_ROWS + 3, crate::qudros::xor2(cell, Felt::ONE));
         assert!(!instance.air.is_satisfied(&instance.trace));
     }
 

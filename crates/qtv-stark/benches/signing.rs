@@ -49,7 +49,7 @@ fn measure(job: &Job) -> Measured {
         num_queries: job.queries,
     };
 
-    // The hashing pieces carry the degree eleven keccak transition and are the
+    // The hashing pieces carry the degree eleven qudros transition and are the
     // heaviest, so they are proved once; the lighter arithmetic pieces are averaged
     // over a few runs.
     let heavy = job.blowup >= 32 || job.rows >= 8192;

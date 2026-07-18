@@ -1,7 +1,7 @@
 //! Prime field arithmetic for the hash based STARK backend.
 
 /// The Goldilocks prime modulus, two to the sixty four minus two to the thirty
-pub const MODULUS: u64 = 0xFFFF_FFFF_0000_0001;
+pub const MODULUS: u64 = 18446744069414584321;
 
 /// An element of the prime field, stored in canonical form in the range zero to
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -86,16 +86,16 @@ mod tests {
 
     #[test]
     fn add_is_commutative_and_has_zero_identity() {
-        let a = Felt::new(0x1234_5678_9abc_def0);
-        let b = Felt::new(0xfeed_face_dead_beef);
+        let a = Felt::new(1311768467463790320);
+        let b = Felt::new(18369614221520256751);
         assert_eq!(a.add(b), b.add(a));
         assert_eq!(a.add(Felt::ZERO), a);
     }
 
     #[test]
     fn sub_is_the_inverse_of_add() {
-        let a = Felt::new(0x0f0f_0f0f_0f0f_0f0f);
-        let b = Felt::new(0x00ff_00ff_00ff_00ff);
+        let a = Felt::new(1085102592571150095);
+        let b = Felt::new(71777214294589695);
         assert_eq!(a.add(b).sub(b), a);
         assert_eq!(a.sub(a), Felt::ZERO);
     }
@@ -109,9 +109,9 @@ mod tests {
 
     #[test]
     fn mul_is_commutative_associative_and_distributes() {
-        let a = Felt::new(0x00c0_ffee_0000_0001);
-        let b = Felt::new(0x1111_2222_3333_4444);
-        let c = Felt::new(0x9999_8888_7777_6666);
+        let a = Felt::new(54324593195745281);
+        let b = Felt::new(1229801703532086340);
+        let c = Felt::new(11068027678940948070);
         assert_eq!(a.mul(b), b.mul(a));
         assert_eq!(a.mul(b).mul(c), a.mul(b.mul(c)));
         assert_eq!(a.mul(b.add(c)), a.mul(b).add(a.mul(c)));
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn inverse_returns_the_multiplicative_unit() {
-        for raw in [1u64, 2, 3, 7, 0x0123_4567_89ab_cdef, MODULUS - 1] {
+        for raw in [1u64, 2, 3, 7, 81985529216486895, MODULUS - 1] {
             let a = Felt::new(raw);
             assert_eq!(a.mul(a.inv()), Felt::ONE);
         }

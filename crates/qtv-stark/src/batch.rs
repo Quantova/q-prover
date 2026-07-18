@@ -108,7 +108,7 @@ mod tests {
 
     fn sample_batch() -> BatchCertificate {
         let products: Vec<(u64, u64)> = (0..20u64)
-            .map(|i| (i.wrapping_mul(0x9e37_79b9) % Q, (i * 7 + 3) % Q))
+            .map(|i| (i.wrapping_mul(2654435769) % Q, (i * 7 + 3) % Q))
             .collect();
         let response: Vec<u64> = (0..12u64)
             .map(|i| {
@@ -120,7 +120,7 @@ mod tests {
                 }
             })
             .collect();
-        let commitment: Vec<u64> = (0..15u64).map(|i| i.wrapping_mul(0x0051_1e5) % Q).collect();
+        let commitment: Vec<u64> = (0..15u64).map(|i| i.wrapping_mul(332261) % Q).collect();
         let hints: Vec<u64> = (0..15u64).map(|i| i & 1).collect();
         batch_trace(&products, &response, &commitment, &hints)
     }
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn the_permutation_binds_the_shared_coefficients() {
         let cert = sample_batch();
-        let challenges = [Felt::new(0x1234_5678_9abc)];
+        let challenges = [Felt::new(20015998343868)];
         assert!(cert.air.is_satisfied_with(&cert.trace, &challenges));
     }
 
@@ -146,7 +146,7 @@ mod tests {
         // the hint act on different multisets. The running product cannot close.
         let hint_r = HINT_BASE + hint::COL_R;
         trace.set(hint_r, 3, trace.get(hint_r, 3).add(Felt::new(5)));
-        let challenges = [Felt::new(0x1234_5678_9abc)];
+        let challenges = [Felt::new(20015998343868)];
         assert!(!cert.air.is_satisfied_with(&trace, &challenges));
     }
 

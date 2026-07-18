@@ -107,7 +107,7 @@ fn main() {
     println!();
 
     let highs: Vec<u8> = (0..256u16)
-        .map(|i| (i.wrapping_mul(7) & 0x0f) as u8)
+        .map(|i| (i.wrapping_mul(7) & 15) as u8)
         .collect();
     let enc = encode_batch(&highs);
     report(

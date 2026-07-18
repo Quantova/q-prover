@@ -44,7 +44,7 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
 
 /// The candidate integer of one byte triple, the twenty three bit value the
 pub fn candidate(b0: u8, b1: u8, b2: u8) -> u32 {
-    (b0 as u32) | ((b1 as u32) << 8) | (((b2 & 0x7f) as u32) << 16)
+    (b0 as u32) | ((b1 as u32) << 8) | (((b2 & 127) as u32) << 16)
 }
 
 /// Rejection samples one ring of coefficients below the modulus from the stream,
@@ -161,7 +161,7 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
 
 /// Fills one rejection sampling row at the given column base over one byte triple.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, b0: u8, b1: u8, b2: u8) {
-    let b2m = (b2 & 0x7f) as u64;
+    let b2m = (b2 & 127) as u64;
     let bit7 = (b2 >> 7) as u64;
     let z = candidate(b0, b1, b2) as u64;
     let acc = if z < Q { 1u64 } else { 0 };

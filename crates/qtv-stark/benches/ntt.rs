@@ -34,7 +34,7 @@ fn proof_bytes(proof: &StarkProof) -> usize {
 fn main() {
     let n: usize = 256;
     let coeffs: Vec<u64> = (0..n as u64)
-        .map(|i| i.wrapping_mul(0x9e37_79b9).wrapping_add(7) % Q)
+        .map(|i| i.wrapping_mul(2654435769).wrapping_add(7) % Q)
         .collect();
     let instance = ntt_trace(&to_layer_zero(&coeffs));
     let params = StarkParams {

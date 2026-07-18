@@ -1,8 +1,8 @@
-//! Benchmark for one Keccak f permutation, the core of SHA3 and SHAKE.
+//! Benchmark for one Qudros f permutation, the core of SHA3 and SHAKE.
 
 use std::time::Instant;
 
-use qtv_stark::keccak::{keccak_air, keccak_trace, LANES};
+use qtv_stark::qudros::{qudros_air, qudros_trace, LANES};
 use qtv_stark::stark::{prove, verify, StarkParams, StarkProof};
 
 fn merkle_bytes(proof: &qtv_stark::merkle::MerkleProof) -> usize {
@@ -34,10 +34,10 @@ fn main() {
     let mut input = [0u64; LANES];
     for (i, lane) in input.iter_mut().enumerate() {
         *lane = (i as u64)
-            .wrapping_mul(0x0123_4567_89ab_cdef)
-            .wrapping_add(0xdead_beef);
+            .wrapping_mul(81985529216486895)
+            .wrapping_add(3735928559);
     }
-    let instance = keccak_trace(&input);
+    let instance = qudros_trace(&input);
     let params = StarkParams {
         lde_blowup: 32,
         num_queries: 32,
@@ -52,7 +52,7 @@ fn main() {
     let prove_time = start.elapsed() / prove_iters;
 
     let verify_iters = 20;
-    let air = keccak_air(&input, &instance.output);
+    let air = qudros_air(&input, &instance.output);
     let start = Instant::now();
     let mut accepted = verify(&air, &params, &proof);
     for _ in 1..verify_iters {
@@ -60,7 +60,7 @@ fn main() {
     }
     let verify_time = start.elapsed() / verify_iters;
 
-    println!("keccak f permutation");
+    println!("qudros f permutation");
     println!("rounds proved 24 in trace rows {}", instance.trace.length());
     println!("base columns {}", instance.trace.width());
     println!("queries {}", params.num_queries);

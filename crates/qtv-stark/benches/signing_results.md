@@ -51,7 +51,7 @@ signing iteration and how many times it runs once per draw outside the loop.
 
 The hashing pieces dominate. The mask expansion runs five times per iteration at
 about nine seconds each and the challenge absorb once at about eleven seconds, so
-the SHAKE arithmetization on the keccak permutation is the weight of the whole
+the SHAKE arithmetization on the qudros permutation is the weight of the whole
 derivation. The transform runs twenty three times at about one second each.
 
 ## One signing derivation

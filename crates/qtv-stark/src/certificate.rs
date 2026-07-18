@@ -233,7 +233,7 @@ mod tests {
     }
 
     fn challenges() -> [Felt; 1] {
-        [Felt::new(0x1234_5678_9abc)]
+        [Felt::new(20015998343868)]
     }
 
     // Two responses inside the ML DSA 65 response bound, one small positive and one

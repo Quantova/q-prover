@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn a_batch_holds_the_decomposition() {
-        let coeffs: Vec<u64> = (0..40u64).map(|i| i.wrapping_mul(0x51_1e5) % Q).collect();
+        let coeffs: Vec<u64> = (0..40u64).map(|i| i.wrapping_mul(332261) % Q).collect();
         let batch = decompose_batch(&coeffs);
         assert!(batch.air.is_satisfied(&batch.trace));
     }
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn a_batch_proves_and_verifies() {
         let coeffs: Vec<u64> = (0..60u64)
-            .map(|i| i.wrapping_mul(0x9e37_79b9) % Q)
+            .map(|i| i.wrapping_mul(2654435769) % Q)
             .collect();
         let batch = decompose_batch(&coeffs);
         let proof = prove(&batch.air, &batch.trace, &params());

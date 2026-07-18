@@ -152,8 +152,8 @@ mod tests {
     fn sample_inputs(count: usize) -> Vec<(u64, u64)> {
         (0..count as u64)
             .map(|i| {
-                let a = i.wrapping_mul(0x9e37_79b9) % Q;
-                let b = (i.wrapping_mul(0x8542_1f4b) + 7) % Q;
+                let a = i.wrapping_mul(2654435769) % Q;
+                let b = (i.wrapping_mul(2235703115) + 7) % Q;
                 (a, b)
             })
             .collect()
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn the_signature_workload_has_the_expected_shape() {
-        let workload = signature_batch_workload(2, 0x1234);
+        let workload = signature_batch_workload(2, 4660);
         assert_eq!(workload.len(), 2 * PRODUCTS_PER_SIGNATURE);
         assert_eq!(PRODUCTS_PER_SIGNATURE, 7680);
         for (a, b) in &workload {

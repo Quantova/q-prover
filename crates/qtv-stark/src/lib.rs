@@ -13,7 +13,7 @@ pub mod field;
 pub mod fri;
 pub mod hashing;
 pub mod hint;
-pub mod keccak;
+pub mod qudros;
 pub mod lattice;
 pub mod merkle;
 pub mod norm;

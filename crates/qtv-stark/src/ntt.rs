@@ -345,7 +345,7 @@ mod tests {
 
     fn sample_coeffs(n: usize) -> Vec<u64> {
         (0..n as u64)
-            .map(|i| i.wrapping_mul(0x9e37_79b9).wrapping_add(7) % Q)
+            .map(|i| i.wrapping_mul(2654435769).wrapping_add(7) % Q)
             .collect()
     }
 
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn the_whole_relation_holds_under_challenges() {
         let instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
-        let challenges = [Felt::new(0x1234_5678), Felt::new(0x9abc_def0)];
+        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
     }
 
@@ -384,7 +384,7 @@ mod tests {
         // Corrupt an internal produced value and its bit expansions so the local
         // arithmetic still holds but the wiring no longer matches the consumer.
         let mut instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
-        let challenges = [Felt::new(0x1234_5678), Felt::new(0x9abc_def0)];
+        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
         // Row 1 is step one, an internal producer. Swap its two outputs, which
         // keeps the multiset within the row but breaks the per identity match.

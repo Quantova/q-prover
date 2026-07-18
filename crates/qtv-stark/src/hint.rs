@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn a_batch_proves_and_verifies() {
         let pairs: Vec<(u64, u64)> = (0..48u64)
-            .map(|i| (i.wrapping_mul(0x9e37_79b9) % Q, i & 1))
+            .map(|i| (i.wrapping_mul(2654435769) % Q, i & 1))
             .collect();
         let batch = hint_batch(&pairs);
         let proof = prove(&batch.air, &batch.trace, &params());

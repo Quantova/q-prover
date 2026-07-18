@@ -43,7 +43,7 @@ pub fn w1_encode(highs: &[u8]) -> Vec<u8> {
     );
     highs
         .chunks(2)
-        .map(|pair| (pair[0] & 0x0f) | ((pair[1] & 0x0f) << 4))
+        .map(|pair| (pair[0] & 15) | ((pair[1] & 15) << 4))
         .collect()
 }
 
@@ -97,8 +97,8 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
 
 /// Fills one high bit packing row at the given column base over one nibble pair.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, lo: u8, hi: u8) {
-    let lo = (lo & 0x0f) as u64;
-    let hi = (hi & 0x0f) as u64;
+    let lo = (lo & 15) as u64;
+    let hi = (hi & 15) as u64;
     trace.set(base + COL_LO, row, Felt::new(lo));
     trace.set(base + COL_HI, row, Felt::new(hi));
     trace.set(base + COL_BYTE, row, Felt::new(lo + 16 * hi));
@@ -154,7 +154,7 @@ mod tests {
     }
 
     fn sample_highs() -> Vec<u8> {
-        (0..64u8).map(|i| i.wrapping_mul(7) & 0x0f).collect()
+        (0..64u8).map(|i| i.wrapping_mul(7) & 15).collect()
     }
 
     #[test]

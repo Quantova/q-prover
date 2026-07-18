@@ -63,7 +63,7 @@ Two parts of the relation are not arithmetized in this run.
 
 The matrix and challenge expansion from the extendable output function. The
 public matrix is expanded from a seed and the challenge is sampled from its hash,
-both through SHAKE. Arithmetizing SHAKE means arithmetizing the Keccak
+both through SHAKE. Arithmetizing SHAKE means arithmetizing the Qudros
 permutation as trace constraints, a large self contained effort that does not
 fit this run. It is the one hash based piece the relation still needs in circuit.
 

@@ -34,7 +34,7 @@ fn proof_bytes(proof: &StarkProof) -> usize {
 
 fn main() {
     let signatures = 1;
-    let workload = signature_batch_workload(signatures, 0x5eed);
+    let workload = signature_batch_workload(signatures, 24301);
     let batch = modmul_batch(&workload);
     let length = batch.trace.length();
     let air = modmul_air(length);

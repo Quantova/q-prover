@@ -443,7 +443,7 @@ mod tests {
             base.set(0, row, Felt::new(source[row]));
             base.set(1, row, Felt::new(shuffled[row]));
         }
-        let challenges = [Felt::new(0x1234_5678_9abc)];
+        let challenges = [Felt::new(20015998343868)];
         assert_eq!(air.num_challenges(), 1);
         assert_eq!(air.aux_width(), 1);
         assert!(air.is_satisfied_with(&base, &challenges));
@@ -461,7 +461,7 @@ mod tests {
             base.set(0, row, Felt::new(source[row]));
             base.set(1, row, Felt::new(shuffled[row]));
         }
-        let challenges = [Felt::new(0x1234_5678_9abc)];
+        let challenges = [Felt::new(20015998343868)];
         assert!(!air.is_satisfied_with(&base, &challenges));
     }
 
@@ -474,7 +474,7 @@ mod tests {
             base.set(0, row, Felt::new(values[row]));
             base.set(1, row, Felt::new(values[7 - row]));
         }
-        let challenges = [Felt::new(0x9e37_79b9_7f4a)];
+        let challenges = [Felt::new(173961102589770)];
         let aux = air.build_aux(&base, &challenges);
         assert_eq!(aux.len(), 1);
         assert_eq!(aux[0][0], Felt::ONE);

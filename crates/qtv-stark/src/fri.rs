@@ -94,7 +94,7 @@ impl Transcript {
 
     /// Draws a field element challenge.
     pub fn challenge_felt(&mut self) -> Felt {
-        let out = self.squeeze(0x01);
+        let out = self.squeeze(1);
         let mut wide: u128 = 0;
         for byte in &out[..16] {
             wide = (wide << 8) | (*byte as u128);
@@ -104,7 +104,7 @@ impl Transcript {
 
     /// Draws an index below the given bound.
     pub fn challenge_index(&mut self, bound: usize) -> usize {
-        let out = self.squeeze(0x02);
+        let out = self.squeeze(2);
         let mut wide: u64 = 0;
         for byte in &out[..8] {
             wide = (wide << 8) | (*byte as u64);
@@ -358,7 +358,7 @@ mod tests {
         let coeffs: Vec<Felt> = (1..=16u64).map(Felt::new).collect();
         let evals = eval_domain(&coeffs, log_n);
 
-        let challenge = Felt::new(0xabcd_1234);
+        let challenge = Felt::new(2882343476);
         let generator_inv = root_of_unity(log_n).inv();
         let folded = fold_layer(&evals, challenge, generator_inv);
 
@@ -436,7 +436,7 @@ mod tests {
     fn a_low_degree_vector_is_accepted() {
         let params = sample_params();
         let coeffs: Vec<Felt> = (0..params.degree_bound() as u64)
-            .map(|i| Felt::new(i.wrapping_mul(0x9e37_79b9) ^ 0x51))
+            .map(|i| Felt::new(i.wrapping_mul(2654435769) ^ 81))
             .collect();
         let evals = eval_domain(&coeffs, params.log_domain_size);
         let proof = prove(&evals, &params);
@@ -447,7 +447,7 @@ mod tests {
     fn a_high_degree_vector_is_rejected() {
         let params = sample_params();
         let coeffs: Vec<Felt> = (0..params.domain_size() as u64)
-            .map(|i| Felt::new(i.wrapping_mul(0xd1b5_4a32) ^ 0x2f))
+            .map(|i| Felt::new(i.wrapping_mul(3518319154) ^ 47))
             .collect();
         let evals = eval_domain(&coeffs, params.log_domain_size);
         let proof = prove(&evals, &params);

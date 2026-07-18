@@ -48,9 +48,9 @@ fn main() {
         num_queries: 32,
     };
 
-    let products = signature_batch_workload(signatures, 0x5eed);
+    let products = signature_batch_workload(signatures, 24301);
 
-    let mut state = 0xa1b2u64 | 1;
+    let mut state = 41394u64 | 1;
     let response: Vec<u64> = (0..signatures * MATRIX_COLS * RING_DEGREE)
         .map(|_| {
             let m = draw(&mut state) % NORM_BOUND;

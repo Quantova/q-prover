@@ -180,7 +180,7 @@ pub fn mask_expansion_job() -> Job {
 
 /// One number theoretic transform of degree two hundred fifty six, the transform
 pub fn transform_job() -> Job {
-    let coeffs = reduced_sequence(N, 0x5157_11a5);
+    let coeffs = reduced_sequence(N, 1364660645);
     let instance = ntt::ntt_trace(&ntt::to_layer_zero(&coeffs));
     let verifier = ntt::ntt_air(N, &instance.input, &instance.output);
     let rows = instance.trace.length();
@@ -201,7 +201,7 @@ pub fn transform_job() -> Job {
 
 /// The transform domain pointwise products of one iteration in one batch, the
 pub fn pointwise_products_job() -> Job {
-    let inputs = reduced_pairs(POINTWISE_PER_ITERATION, 0x9e37_79b9);
+    let inputs = reduced_pairs(POINTWISE_PER_ITERATION, 2654435769);
     let batch = lattice::modmul_batch(&inputs);
     let length = batch.trace.length();
     let verifier = lattice::modmul_air(length);
@@ -222,7 +222,7 @@ pub fn pointwise_products_job() -> Job {
 
 /// The commitment high bits w1 = HighBits(w), one decomposition per matrix product
 pub fn high_bits_job() -> Job {
-    let coeffs = reduced_sequence(COMMITMENT_COEFFS, 0x00c0_ffee);
+    let coeffs = reduced_sequence(COMMITMENT_COEFFS, 12648430);
     let batch = decompose::decompose_batch(&coeffs);
     let length = batch.trace.length();
     let verifier = decompose::decompose_air(length);
@@ -247,7 +247,7 @@ pub fn challenge_absorb_job() -> Job {
     // The commitment high bits packed two to a byte, w1Encode of the K matrix
     // rows, the encoded commitment the challenge hash absorbs.
     let highs: Vec<u8> = (0..COMMITMENT_COEFFS)
-        .map(|i| (i as u8).wrapping_mul(7) & 0x0f)
+        .map(|i| (i as u8).wrapping_mul(7) & 15)
         .collect();
     let w1 = encode::w1_encode(&highs);
     let mut input = Vec::with_capacity(mu.len() + w1.len());
@@ -274,7 +274,7 @@ pub fn challenge_absorb_job() -> Job {
 /// The commitment high bit packing, w1Encode, folding two four bit high parts into
 pub fn w1_encode_job() -> Job {
     let highs: Vec<u8> = (0..COMMITMENT_COEFFS)
-        .map(|i| (i as u8).wrapping_mul(7) & 0x0f)
+        .map(|i| (i as u8).wrapping_mul(7) & 15)
         .collect();
     let batch = encode::encode_batch(&highs);
     let length = batch.trace.length();
@@ -352,7 +352,7 @@ pub fn response_norm_job() -> Job {
 
 /// The low bits r0 = LowBits(w - c s2), one decomposition per commitment
 pub fn low_bits_job() -> Job {
-    let coeffs = reduced_sequence(COMMITMENT_COEFFS, 0x1234_5678);
+    let coeffs = reduced_sequence(COMMITMENT_COEFFS, 305419896);
     let batch = decompose::decompose_batch(&coeffs);
     let length = batch.trace.length();
     let verifier = decompose::decompose_air(length);
@@ -457,7 +457,7 @@ mod tests {
     fn every_job_arithmetic_holds() {
         // The permutation carrying pieces are checked under fixed challenges; the
         // rest hold on the base trace directly.
-        let challenges = [Felt::new(0x1234_5678), Felt::new(0x9abc_def0)];
+        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
         for job in signing_jobs() {
             let ok = if job.prover.num_challenges() == 0 {
                 job.prover.is_satisfied(&job.trace)

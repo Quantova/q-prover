@@ -536,7 +536,7 @@ mod tests {
         );
         let mut trace = TraceTable::new(2, length);
         let source: Vec<Felt> = (0..length)
-            .map(|i| Felt::new((i as u64).wrapping_mul(0x9e37_79b9) + 3))
+            .map(|i| Felt::new((i as u64).wrapping_mul(2654435769) + 3))
             .collect();
         for row in 0..length {
             trace.set(0, row, source[row]);

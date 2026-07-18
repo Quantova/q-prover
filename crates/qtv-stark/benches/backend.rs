@@ -47,7 +47,7 @@ fn main() {
 
     let degree = 256;
     let coeffs: Vec<Felt> = (0..degree)
-        .map(|i| Felt::new((i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0x1234_5678))
+        .map(|i| Felt::new((i as u64).wrapping_mul(11400714819323198485) ^ 305419896))
         .collect();
     let evals = eval_domain(&coeffs, params.log_domain_size);
 

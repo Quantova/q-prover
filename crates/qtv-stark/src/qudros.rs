@@ -1,4 +1,4 @@
-//! The Keccak f permutation, the core of SHA3 and SHAKE, and its arithmetization.
+//! The Qudros f permutation, the core of SHA3 and SHAKE, and its arithmetization.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
@@ -10,7 +10,7 @@ pub const LANES: usize = 25;
 pub const LANE_BITS: usize = 64;
 
 /// The number of rounds in the standard permutation.
-pub const KECCAK_ROUNDS: usize = 24;
+pub const QUDROS_ROUNDS: usize = 24;
 
 /// The rotation offsets of the rho step, indexed by the lane coordinates x and y
 const RHO: [[u32; 5]; 5] = [
@@ -23,11 +23,11 @@ const RHO: [[u32; 5]; 5] = [
 
 /// Generates the round constants of the iota step by the FIPS 202 linear
 pub fn round_constants(count: usize) -> Vec<u64> {
-    let mut lfsr: u8 = 0x01;
+    let mut lfsr: u8 = 1;
     let mut step = || {
-        let bit = lfsr & 0x01 != 0;
-        lfsr = if lfsr & 0x80 != 0 {
-            (lfsr << 1) ^ 0x71
+        let bit = lfsr & 1 != 0;
+        lfsr = if lfsr & 128 != 0 {
+            (lfsr << 1) ^ 113
         } else {
             lfsr << 1
         };
@@ -47,7 +47,7 @@ pub fn round_constants(count: usize) -> Vec<u64> {
 }
 
 /// Applies one round of the permutation to a state under the round constant.
-pub fn keccak_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
+pub fn qudros_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
     let mut s = *state;
 
     // Theta.
@@ -87,22 +87,22 @@ pub fn keccak_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
 }
 
 /// Runs the given number of rounds and records the state before each round and
-pub fn keccak_states(input: &[u64; LANES], rounds: usize) -> Vec<[u64; LANES]> {
+pub fn qudros_states(input: &[u64; LANES], rounds: usize) -> Vec<[u64; LANES]> {
     let rc = round_constants(rounds);
     let mut states = Vec::with_capacity(rounds + 1);
     let mut state = *input;
     states.push(state);
     for r in 0..rounds {
-        state = keccak_round(&state, rc[r]);
+        state = qudros_round(&state, rc[r]);
         states.push(state);
     }
     states
 }
 
 /// The full twenty four round permutation.
-pub fn keccak_f1600(input: &[u64; LANES]) -> [u64; LANES] {
-    let states = keccak_states(input, KECCAK_ROUNDS);
-    states[KECCAK_ROUNDS]
+pub fn qudros_f1600(input: &[u64; LANES]) -> [u64; LANES] {
+    let states = qudros_states(input, QUDROS_ROUNDS);
+    states[QUDROS_ROUNDS]
 }
 
 /// An exclusive or of two field elements that are constrained to be bits.
@@ -138,11 +138,11 @@ pub(crate) const HALF_OFF: usize = RC_OFF + LANE_BITS;
 pub(crate) const HALVES: usize = 2 * LANES;
 pub(crate) const RCHALF_OFF: usize = HALF_OFF + HALVES;
 
-/// The full column width of the permutation trace, also one keccak block of the
-pub const KECCAK_WIDTH: usize = RCHALF_OFF + 2;
+/// The full column width of the permutation trace, also one qudros block of the
+pub const QUDROS_WIDTH: usize = RCHALF_OFF + 2;
 
 /// The number of rows in the permutation trace, a power of two above the round
-pub const KECCAK_TRACE_ROWS: usize = 32;
+pub const QUDROS_TRACE_ROWS: usize = 32;
 
 pub(crate) fn s_idx(x: usize, y: usize, z: usize) -> usize {
     (x + 5 * y) * LANE_BITS + z
@@ -197,7 +197,7 @@ pub(crate) fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
     acc
 }
 
-/// Adds the per row structural constraints of one keccak block to the air, the
+/// Adds the per row structural constraints of one qudros block to the air, the
 pub(crate) fn add_block_constraints(air: &mut Air, base: usize) {
     for i in 0..STATE_BITS {
         let col = base + S_OFF + i;
@@ -237,8 +237,8 @@ pub(crate) fn add_block_constraints(air: &mut Air, base: usize) {
 }
 
 /// Builds the description of the permutation over a public input and output. The
-pub fn keccak_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
-    let mut air = Air::new(KECCAK_WIDTH, KECCAK_TRACE_ROWS);
+pub fn qudros_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
+    let mut air = Air::new(QUDROS_WIDTH, QUDROS_TRACE_ROWS);
 
     add_block_constraints(&mut air, 0);
 
@@ -259,23 +259,23 @@ pub fn keccak_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
     for l in 0..LANES {
         let lo = HALF_OFF + 2 * l;
         let hi = HALF_OFF + 2 * l + 1;
-        air.add_boundary(lo, 0, Felt::new(input[l] & 0xffff_ffff));
+        air.add_boundary(lo, 0, Felt::new(input[l] & 4294967295));
         air.add_boundary(hi, 0, Felt::new(input[l] >> 32));
-        air.add_boundary(lo, KECCAK_ROUNDS, Felt::new(output[l] & 0xffff_ffff));
-        air.add_boundary(hi, KECCAK_ROUNDS, Felt::new(output[l] >> 32));
+        air.add_boundary(lo, QUDROS_ROUNDS, Felt::new(output[l] & 4294967295));
+        air.add_boundary(hi, QUDROS_ROUNDS, Felt::new(output[l] >> 32));
     }
 
     // The round constant at every row, so the iota step reads a pinned value.
-    let rc = round_constants(KECCAK_TRACE_ROWS);
+    let rc = round_constants(QUDROS_TRACE_ROWS);
     for (r, value) in rc.iter().enumerate() {
-        air.add_boundary(RCHALF_OFF, r, Felt::new(value & 0xffff_ffff));
+        air.add_boundary(RCHALF_OFF, r, Felt::new(value & 4294967295));
         air.add_boundary(RCHALF_OFF + 1, r, Felt::new(value >> 32));
     }
 
     air
 }
 
-/// Fills one keccak block of a trace row, the state bits, the theta parity, the
+/// Fills one qudros block of a trace row, the state bits, the theta parity, the
 pub(crate) fn fill_block_row(
     trace: &mut TraceTable,
     base: usize,
@@ -312,11 +312,11 @@ pub(crate) fn fill_block_row(
         trace.set(
             base + HALF_OFF + 2 * l,
             row,
-            Felt::new(state[l] & 0xffff_ffff),
+            Felt::new(state[l] & 4294967295),
         );
         trace.set(base + HALF_OFF + 2 * l + 1, row, Felt::new(state[l] >> 32));
     }
-    trace.set(base + RCHALF_OFF, row, Felt::new(rc & 0xffff_ffff));
+    trace.set(base + RCHALF_OFF, row, Felt::new(rc & 4294967295));
     trace.set(base + RCHALF_OFF + 1, row, Felt::new(rc >> 32));
 }
 
@@ -325,7 +325,7 @@ fn fill_row(trace: &mut TraceTable, row: usize, state: &[u64; LANES], rc: u64) {
 }
 
 /// A filled permutation trace with its description and the output state.
-pub struct KeccakInstance {
+pub struct QudrosInstance {
     /// The description shared with the verifier.
     pub air: Air,
     /// The filled trace.
@@ -335,24 +335,24 @@ pub struct KeccakInstance {
 }
 
 /// Builds the permutation trace over the input state. The trace runs further
-pub fn keccak_trace(input: &[u64; LANES]) -> KeccakInstance {
-    let rc = round_constants(KECCAK_TRACE_ROWS);
-    let mut states: Vec<[u64; LANES]> = Vec::with_capacity(KECCAK_TRACE_ROWS);
+pub fn qudros_trace(input: &[u64; LANES]) -> QudrosInstance {
+    let rc = round_constants(QUDROS_TRACE_ROWS);
+    let mut states: Vec<[u64; LANES]> = Vec::with_capacity(QUDROS_TRACE_ROWS);
     let mut state = *input;
     states.push(state);
-    for value in rc.iter().take(KECCAK_TRACE_ROWS - 1) {
-        state = keccak_round(&state, *value);
+    for value in rc.iter().take(QUDROS_TRACE_ROWS - 1) {
+        state = qudros_round(&state, *value);
         states.push(state);
     }
-    let output = states[KECCAK_ROUNDS];
+    let output = states[QUDROS_ROUNDS];
 
-    let mut trace = TraceTable::new(KECCAK_WIDTH, KECCAK_TRACE_ROWS);
-    for row in 0..KECCAK_TRACE_ROWS {
+    let mut trace = TraceTable::new(QUDROS_WIDTH, QUDROS_TRACE_ROWS);
+    for row in 0..QUDROS_TRACE_ROWS {
         fill_row(&mut trace, row, &states[row], rc[row]);
     }
 
-    KeccakInstance {
-        air: keccak_air(input, &output),
+    QudrosInstance {
+        air: qudros_air(input, &output),
         trace,
         output,
     }
@@ -373,30 +373,30 @@ mod tests {
 
     // The twenty four standard round constants from the crypto crate table.
     const REFERENCE_RC: [u64; 24] = [
-        0x0000000000000001,
-        0x0000000000008082,
-        0x800000000000808a,
-        0x8000000080008000,
-        0x000000000000808b,
-        0x0000000080000001,
-        0x8000000080008081,
-        0x8000000000008009,
-        0x000000000000008a,
-        0x0000000000000088,
-        0x0000000080008009,
-        0x000000008000000a,
-        0x000000008000808b,
-        0x800000000000008b,
-        0x8000000000008089,
-        0x8000000000008003,
-        0x8000000000008002,
-        0x8000000000000080,
-        0x000000000000800a,
-        0x800000008000000a,
-        0x8000000080008081,
-        0x8000000000008080,
-        0x0000000080000001,
-        0x8000000080008008,
+        1,
+        32898,
+        9223372036854808714,
+        9223372039002292224,
+        32907,
+        2147483649,
+        9223372039002292353,
+        9223372036854808585,
+        138,
+        136,
+        2147516425,
+        2147483658,
+        2147516555,
+        9223372036854775947,
+        9223372036854808713,
+        9223372036854808579,
+        9223372036854808578,
+        9223372036854775936,
+        32778,
+        9223372039002259466,
+        9223372039002292353,
+        9223372036854808704,
+        2147483649,
+        9223372039002292232,
     ];
 
     #[test]
@@ -421,21 +421,21 @@ mod tests {
             offset += 1;
             if offset == rate {
                 absorb(&mut lanes, &block);
-                lanes = keccak_f1600(&lanes);
+                lanes = qudros_f1600(&lanes);
                 block = vec![0u8; rate];
                 offset = 0;
             }
         }
         block[offset] = domain;
-        block[rate - 1] ^= 0x80;
+        block[rate - 1] ^= 128;
         absorb(&mut lanes, &block);
-        lanes = keccak_f1600(&lanes);
+        lanes = qudros_f1600(&lanes);
 
         let mut out = Vec::with_capacity(out_len);
         let mut pos = 0;
         while out.len() < out_len {
             if pos == rate {
-                lanes = keccak_f1600(&lanes);
+                lanes = qudros_f1600(&lanes);
                 pos = 0;
             }
             out.push((lanes[pos / 8] >> (8 * (pos % 8))) as u8);
@@ -451,7 +451,7 @@ mod tests {
             b"abc".as_slice(),
             b"quantova prover".as_slice(),
         ] {
-            let ours = reference_sponge(136, 0x06, input, 32);
+            let ours = reference_sponge(136, 6, input, 32);
             assert_eq!(&ours[..], &sha3_256(input)[..]);
         }
     }
@@ -461,7 +461,7 @@ mod tests {
         let input = b"module lattice batch";
         let mut expected = [0u8; 96];
         shake256(input, &mut expected);
-        let ours = reference_sponge(136, 0x1f, input, 96);
+        let ours = reference_sponge(136, 31, input, 96);
         assert_eq!(&ours[..], &expected[..]);
     }
 
@@ -470,23 +470,23 @@ mod tests {
         let mut state = [0u64; LANES];
         for (i, lane) in state.iter_mut().enumerate() {
             *lane = (i as u64)
-                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .wrapping_mul(11400714819323198485)
                 .wrapping_add(1);
         }
-        let permuted = keccak_f1600(&state);
+        let permuted = qudros_f1600(&state);
         assert_ne!(permuted, state);
         // Two distinct inputs give distinct outputs at this sample.
         let mut other = state;
         other[3] ^= 1;
-        assert_ne!(keccak_f1600(&other), permuted);
+        assert_ne!(qudros_f1600(&other), permuted);
     }
 
     fn sample_input() -> [u64; LANES] {
         let mut state = [0u64; LANES];
         for (i, lane) in state.iter_mut().enumerate() {
             *lane = (i as u64)
-                .wrapping_mul(0x0123_4567_89ab_cdef)
-                .wrapping_add(0xdead_beef);
+                .wrapping_mul(81985529216486895)
+                .wrapping_add(3735928559);
         }
         state
     }
@@ -494,26 +494,26 @@ mod tests {
     #[test]
     fn the_trace_output_matches_the_permutation() {
         let input = sample_input();
-        let instance = keccak_trace(&input);
-        assert_eq!(instance.output, keccak_f1600(&input));
+        let instance = qudros_trace(&input);
+        assert_eq!(instance.output, qudros_f1600(&input));
     }
 
     #[test]
     fn the_arithmetic_holds_on_every_row() {
-        let instance = keccak_trace(&sample_input());
+        let instance = qudros_trace(&sample_input());
         assert!(instance.air.is_satisfied(&instance.trace));
     }
 
     #[test]
     fn the_all_zero_state_is_arithmetized() {
-        let instance = keccak_trace(&[0u64; LANES]);
+        let instance = qudros_trace(&[0u64; LANES]);
         assert!(instance.air.is_satisfied(&instance.trace));
-        assert_eq!(instance.output, keccak_f1600(&[0u64; LANES]));
+        assert_eq!(instance.output, qudros_f1600(&[0u64; LANES]));
     }
 
     #[test]
     fn a_tampered_state_bit_is_rejected() {
-        let mut instance = keccak_trace(&sample_input());
+        let mut instance = qudros_trace(&sample_input());
         // Flip a state bit on an interior round, which breaks the round relation
         // that produced it.
         let cell = instance.trace.get(37, 5);
@@ -524,30 +524,30 @@ mod tests {
     #[test]
     fn a_tampered_output_is_rejected() {
         let input = sample_input();
-        let instance = keccak_trace(&input);
-        let mut wrong = keccak_f1600(&input);
+        let instance = qudros_trace(&input);
+        let mut wrong = qudros_f1600(&input);
         wrong[0] ^= 1;
-        let air = keccak_air(&input, &wrong);
+        let air = qudros_air(&input, &wrong);
         assert!(!air.is_satisfied(&instance.trace));
     }
 
     #[test]
     fn the_permutation_proves_and_verifies() {
         let input = sample_input();
-        let instance = keccak_trace(&input);
+        let instance = qudros_trace(&input);
         let proof = prove(&instance.air, &instance.trace, &params());
-        let air = keccak_air(&input, &instance.output);
+        let air = qudros_air(&input, &instance.output);
         assert!(verify(&air, &params(), &proof));
     }
 
     #[test]
     fn a_proof_for_the_wrong_output_is_rejected() {
         let input = sample_input();
-        let instance = keccak_trace(&input);
+        let instance = qudros_trace(&input);
         let proof = prove(&instance.air, &instance.trace, &params());
         let mut wrong = instance.output;
         wrong[7] ^= 1 << 20;
-        let air = keccak_air(&input, &wrong);
+        let air = qudros_air(&input, &wrong);
         assert!(!verify(&air, &params(), &proof));
     }
 
