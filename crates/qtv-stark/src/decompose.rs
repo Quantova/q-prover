@@ -1,25 +1,18 @@
-//! High and low bit decomposition for the verify relation.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::Q;
 
-/// The low bit parameter gamma2 for the ML DSA 65 parameter set, the modulus
 pub const GAMMA2: u64 = (Q - 1) / 32;
 
-/// The decomposition step alpha, twice gamma2.
 pub const ALPHA: u64 = 2 * GAMMA2;
 
-/// The number of high parts, the modulus minus one over alpha.
 pub const HIGH_COUNT: u64 = (Q - 1) / ALPHA;
 
-/// The bit width of a high part.
 pub const HIGH_BITS: usize = 4;
 
-/// The bit width that covers the shifted low part.
 pub const LOW_BITS: usize = 20;
 
-/// The input coefficient column, relative to the piece base.
 pub const COL_R: usize = 0;
 const COL_R1: usize = 1;
 const COL_R0S: usize = 2;
@@ -29,11 +22,8 @@ const COL_R1_BITS: usize = 5;
 const COL_R0S_BITS: usize = COL_R1_BITS + HIGH_BITS;
 const COL_R0S_SLACK: usize = COL_R0S_BITS + LOW_BITS;
 
-/// The column width of the decomposition piece.
 pub const WIDTH: usize = COL_R0S_SLACK + LOW_BITS;
 
-// The shift that carries the centered low part into the non negative range
-// zero to alpha.
 const LOW_SHIFT: u64 = GAMMA2;
 
 fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
@@ -47,7 +37,6 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     acc
 }
 
-/// Adds the decomposition constraints at the given column base, so the piece can
 pub fn add_constraints(air: &mut Air, base: usize) {
     let alpha = Felt::new(ALPHA);
     let modulus = Felt::new(Q);
@@ -59,8 +48,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     let kc = base + COL_KC;
     let r0s_inv = base + COL_R0S_INV;
 
-    // r equals r1 times alpha plus the centered low part plus the wrap term. The
-    // centered low part is the shifted low column minus gamma2.
     air.add_single_row(1, move |row| {
         row[r]
             .sub(row[r1].mul(alpha))
@@ -68,29 +55,20 @@ pub fn add_constraints(air: &mut Air, base: usize) {
             .sub(row[kc].mul(modulus))
     });
 
-    // The wrap term is a bit.
     air.add_single_row(2, move |row| row[kc].mul(row[kc].sub(Felt::ONE)));
 
-    // The wrap only fires for the top segment, where the high part is zero.
     air.add_single_row(2, move |row| row[kc].mul(row[r1]));
 
-    // Off the wrap the centered low part stays above minus gamma2, so the
-    // shifted low part is non zero. The inverse witness pins that, which removes
-    // the boundary ambiguity between the two representations at plus or minus
-    // gamma2.
     air.add_single_row(3, move |row| {
         Felt::ONE
             .sub(row[kc])
             .mul(row[r0s].mul(row[r0s_inv]).sub(Felt::ONE))
     });
 
-    // The high part recomposes from four bits, which forces it below sixteen.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_R1_BITS, HIGH_BITS).sub(row[r1])
     });
 
-    // The shifted low part recomposes, and its slack recomposes to alpha minus
-    // it, which together force it within zero to alpha.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_R0S_BITS, LOW_BITS).sub(row[r0s])
     });
@@ -110,7 +88,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     }
 }
 
-/// Builds the decomposition description of the given length. The length must be a
 pub fn decompose_air(length: usize) -> Air {
     let mut air = Air::new(WIDTH, length);
     add_constraints(&mut air, 0);
@@ -123,7 +100,6 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
     }
 }
 
-/// The decomposition of one coefficient into a high part, a centered low part,
 pub fn decompose(r: u64) -> (u64, i64, u64) {
     let r0_raw = r % ALPHA;
     let r0c = if r0_raw <= GAMMA2 {
@@ -139,7 +115,6 @@ pub fn decompose(r: u64) -> (u64, i64, u64) {
     }
 }
 
-/// Fills one decomposition row at the given column base.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, r: u64) {
     let (r1, r0c, kc) = decompose(r);
     let r0s = (r0c + LOW_SHIFT as i64) as u64;
@@ -159,17 +134,12 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, r: u64) {
     set_bits(trace, base + COL_R0S_SLACK, row, slack, LOW_BITS);
 }
 
-/// A filled decomposition batch with its description.
 pub struct DecomposeBatch {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The number of real coefficients before padding.
     pub count: usize,
 }
 
-/// Lays out a trace that decomposes a batch of coefficients. The trace is padded
 pub fn decompose_batch(coefficients: &[u64]) -> DecomposeBatch {
     let count = coefficients.len();
     let length = count.next_power_of_two().max(2);
@@ -250,10 +220,6 @@ mod tests {
 
     #[test]
     fn the_non_canonical_boundary_representation_is_rejected() {
-        // The coefficient gamma2 splits canonically as high part zero and low
-        // part gamma2. The alternative high part one with low part minus gamma2
-        // satisfies the modular relation but sets the shifted low part to zero
-        // off the wrap, which the inverse gate rejects.
         let batch = decompose_batch(&[GAMMA2]);
         let mut trace = batch.trace;
         trace.set(COL_R1, 0, Felt::ONE);
@@ -267,8 +233,6 @@ mod tests {
 
     #[test]
     fn an_out_of_range_low_part_is_rejected() {
-        // Move the whole low part above alpha while keeping the field relation by
-        // dropping the high part, which the range check must catch.
         let batch = decompose_batch(&[5 * ALPHA + 9]);
         let mut trace = batch.trace;
         let r0s = trace.get(COL_R0S, 0);

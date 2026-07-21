@@ -1,4 +1,3 @@
-//! The SHAKE sponge over the arithmetized Qudros permutation.
 
 use std::sync::Arc;
 
@@ -9,19 +8,15 @@ use crate::qudros::{
     s_idx, HALF_OFF, QUDROS_ROUNDS, QUDROS_TRACE_ROWS, QUDROS_WIDTH, LANES, LANE_BITS, RCHALF_OFF,
 };
 
-/// The byte rate of SHAKE128.
 pub const SHAKE128_RATE: usize = 168;
 
-/// The byte rate of SHAKE256.
 pub const SHAKE256_RATE: usize = 136;
 
-/// The SHAKE domain separation byte of the FIPS 202 padding.
 pub const SHAKE_DOMAIN: u8 = 31;
 
 const SEG_ROWS: usize = QUDROS_TRACE_ROWS;
 const SEL_COL: usize = QUDROS_WIDTH;
 
-/// The full column width of the sponge trace, one qudros block plus the round
 pub const SPONGE_WIDTH: usize = QUDROS_WIDTH + 1;
 
 fn block_to_lanes(block: &[u8]) -> [u64; LANES] {
@@ -40,7 +35,6 @@ fn bytes_to_lane(bytes: &[u8]) -> u64 {
     lane
 }
 
-// The single padded input block for a message that fits in one rate block.
 fn padded_block(rate: usize, message: &[u8]) -> Vec<u8> {
     assert!(message.len() < rate, "message must fit in one block");
     let mut block = vec![0u8; rate];
@@ -50,8 +44,6 @@ fn padded_block(rate: usize, message: &[u8]) -> Vec<u8> {
     block
 }
 
-// The state fed into each permutation and produced out of it, one entry per
-// squeeze block. Each output is the input of the next, the squeeze recurrence.
 fn sponge_states(
     rate: usize,
     perms: usize,
@@ -70,7 +62,6 @@ fn sponge_states(
     (ins, outs)
 }
 
-/// The SHAKE output of the given rate over a single block message, the rate lanes
 pub fn shake_output(rate: usize, perms: usize, message: &[u8]) -> Vec<u8> {
     let (_, outs) = sponge_states(rate, perms, message);
     let mut out = Vec::with_capacity(perms * rate);
@@ -82,20 +73,16 @@ pub fn shake_output(rate: usize, perms: usize, message: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The rows of one permutation segment.
 pub const SEGMENT_ROWS: usize = SEG_ROWS;
 
-/// The row of a segment squeeze output, the round count row where the rate lanes
 pub fn squeeze_row(segment: usize) -> usize {
     segment * SEG_ROWS + QUDROS_ROUNDS
 }
 
-/// The low half lane column of a state lane, the field value carrying the low
 pub fn lane_low_col(lane: usize) -> usize {
     HALF_OFF + 2 * lane
 }
 
-/// Adds the single block sponge squeeze constraints to an air whose qudros block
 pub fn add_sponge_constraints(
     air: &mut Air,
     rate: usize,
@@ -106,9 +93,6 @@ pub fn add_sponge_constraints(
     let rows = perms * SEG_ROWS;
     add_block_constraints(air, 0);
 
-    // The combined round and carry transition. On a round row the next state bit
-    // is the qudros round output; on a carry row it is the current state bit, so
-    // the output of one permutation flows into the input of the next.
     for x in 0..5 {
         for y in 0..5 {
             for z in 0..LANE_BITS {
@@ -124,8 +108,6 @@ pub fn add_sponge_constraints(
         }
     }
 
-    // The round selector and round constant at every row. The selector is one on
-    // the twenty four round rows of a segment and zero on the carry rows.
     let rc = round_constants(SEG_ROWS);
     for global in 0..rows {
         let r = global % SEG_ROWS;
@@ -139,7 +121,6 @@ pub fn add_sponge_constraints(
         air.add_boundary(RCHALF_OFF + 1, global, Felt::new(rc[r] >> 32));
     }
 
-    // The absorbed input block, all lanes at the first row.
     let input = block_to_lanes(&padded_block(rate, message));
     for l in 0..LANES {
         let lo = HALF_OFF + 2 * l;
@@ -148,7 +129,6 @@ pub fn add_sponge_constraints(
         air.add_boundary(hi, 0, Felt::new(input[l] >> 32));
     }
 
-    // The squeeze blocks, the rate lanes at the round count row of each segment.
     let rate_lanes = rate / 8;
     for j in 0..perms {
         let out_row = j * SEG_ROWS + QUDROS_ROUNDS;
@@ -162,7 +142,6 @@ pub fn add_sponge_constraints(
     }
 }
 
-/// Fills the sponge columns of a trace over the segments, the state bits, parity,
 pub fn fill_sponge_columns(trace: &mut TraceTable, rate: usize, perms: usize, message: &[u8]) {
     let (ins, _) = sponge_states(rate, perms, message);
     let rc = round_constants(SEG_ROWS);
@@ -186,7 +165,6 @@ pub fn fill_sponge_columns(trace: &mut TraceTable, rate: usize, perms: usize, me
     }
 }
 
-/// Builds the sponge description over a public single block message and the
 pub fn shake_air(rate: usize, perms: usize, message: &[u8], output: &[u8]) -> Air {
     let rows = perms * SEG_ROWS;
     let mut air = Air::new(SPONGE_WIDTH, rows);
@@ -194,17 +172,12 @@ pub fn shake_air(rate: usize, perms: usize, message: &[u8], output: &[u8]) -> Ai
     air
 }
 
-/// A filled sponge trace with its description and the squeeze output.
 pub struct SpongeInstance {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The squeeze output bytes, the block count times the rate.
     pub output: Vec<u8>,
 }
 
-/// Builds the sponge trace over a single block message and the requested number
 pub fn shake_trace(rate: usize, perms: usize, message: &[u8]) -> SpongeInstance {
     let rows = perms * SEG_ROWS;
     let mut trace = TraceTable::new(SPONGE_WIDTH, rows);
@@ -214,14 +187,10 @@ pub fn shake_trace(rate: usize, perms: usize, message: &[u8]) -> SpongeInstance 
     SpongeInstance { air, trace, output }
 }
 
-// The rate expressed in lanes.
 fn rate_lanes(rate: usize) -> usize {
     rate / 8
 }
 
-// The padded blocks to absorb, each as a lane array. Full rate blocks come first
-// and the trailing block carries the domain byte and the final bit, the FIPS 202
-// pad ten star one.
 fn absorb_blocks(rate: usize, message: &[u8]) -> Vec<[u64; LANES]> {
     let mut blocks = Vec::new();
     let mut i = 0;
@@ -238,11 +207,6 @@ fn absorb_blocks(rate: usize, message: &[u8]) -> Vec<[u64; LANES]> {
     blocks
 }
 
-// The absorbed input state fed into each of the given number of permutation
-// segments. The first is the first block over a zero state, each later absorb folds
-// the next block into the rate lanes of the previous output, and any segments past
-// the block count carry the sponge forward as plain squeeze permutations so the
-// segment count can round up to a power of two.
 fn absorb_states(rate: usize, message: &[u8], segments: usize) -> Vec<[u64; LANES]> {
     let blocks = absorb_blocks(rate, message);
     let nblocks = blocks.len();
@@ -265,17 +229,14 @@ fn absorb_states(rate: usize, message: &[u8], segments: usize) -> Vec<[u64; LANE
     states
 }
 
-/// The number of blocks a message of the given rate absorbs, the full blocks and
 pub fn absorb_block_count(rate: usize, message: &[u8]) -> usize {
     message.len() / rate + 1
 }
 
-/// The number of permutation segments the absorb trace runs, the block count
 pub fn absorb_segments(rate: usize, message: &[u8]) -> usize {
     absorb_block_count(rate, message).next_power_of_two()
 }
 
-/// The first squeeze block after absorbing the full multi block message, the rate
 pub fn absorb_output(rate: usize, message: &[u8]) -> Vec<u8> {
     let nblocks = absorb_block_count(rate, message);
     let states = absorb_states(rate, message, nblocks);
@@ -287,7 +248,6 @@ pub fn absorb_output(rate: usize, message: &[u8]) -> Vec<u8> {
     bytes
 }
 
-/// Builds the multi block absorb description over a public message and the public
 pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
     let blocks = Arc::new(absorb_blocks(rate, message));
     let nblocks = blocks.len();
@@ -299,10 +259,6 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
     let mut air = Air::new(width, rows);
     add_block_constraints(&mut air, 0);
 
-    // The round and carry transition per state bit, with the rate lanes taking the
-    // absorb fold at the boundary rows. On a round row the next bit is the round
-    // output, on a plain carry row it is the current bit, and on the boundary row of
-    // a rate lane the current bit is exclusive ored with the next block bit.
     for x in 0..5 {
         for y in 0..5 {
             let l = x + 5 * y;
@@ -338,7 +294,6 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
         }
     }
 
-    // The round selector and round constant at every row.
     let rc = round_constants(SEG_ROWS);
     for global in 0..rows {
         let r = global % SEG_ROWS;
@@ -352,8 +307,6 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
         air.add_boundary(RCHALF_OFF + 1, global, Felt::new(rc[r] >> 32));
     }
 
-    // The absorb selectors, one per boundary, hot on the last carry row of each non
-    // final segment and pinned to zero everywhere else.
     for b in 0..nblocks - 1 {
         let hot = b * SEG_ROWS + SEG_ROWS - 1;
         for global in 0..rows {
@@ -362,7 +315,6 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
         }
     }
 
-    // The first block absorbed over the zero state, all lanes at the first row.
     let first = blocks[0];
     for l in 0..LANES {
         let lo = HALF_OFF + 2 * l;
@@ -371,8 +323,6 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
         air.add_boundary(hi, 0, Felt::new(first[l] >> 32));
     }
 
-    // The first squeeze block, the rate lanes at the round count row of the last
-    // segment.
     let out_row = (nblocks - 1) * SEG_ROWS + QUDROS_ROUNDS;
     for l in 0..rl {
         let lane = bytes_to_lane(&output[l * 8..l * 8 + 8]);
@@ -385,17 +335,12 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
     air
 }
 
-/// A filled multi block absorb trace with its description and first squeeze block.
 pub struct AbsorbInstance {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The first squeeze block bytes, the rate.
     pub output: Vec<u8>,
 }
 
-/// Builds the multi block absorb trace over the full message. Each segment runs one
 pub fn absorb_trace(rate: usize, message: &[u8]) -> AbsorbInstance {
     let nblocks = absorb_block_count(rate, message);
     let segments = nblocks.next_power_of_two();
@@ -472,8 +417,6 @@ mod tests {
         assert!(instance.air.is_satisfied(&instance.trace));
     }
 
-    // A message spanning several SHAKE256 rate blocks, standing in for the message
-    // digest joined with the encoded commitment of the challenge input.
     fn multi_block_message() -> Vec<u8> {
         (0..300u16)
             .map(|i| (i.wrapping_mul(31).wrapping_add(7)) as u8)
@@ -507,8 +450,6 @@ mod tests {
 
     #[test]
     fn a_dropped_absorb_block_is_rejected() {
-        // Proving the first block alone against the full input squeeze must fail, so
-        // the absorb cannot silently skip the later blocks.
         let message = multi_block_message();
         let full = absorb_output(SHAKE256_RATE, &message);
         let first_block_only = &message[..SHAKE256_RATE - 1];
@@ -541,8 +482,6 @@ mod tests {
     #[test]
     fn a_tampered_squeeze_row_is_rejected() {
         let mut instance = shake_trace(SHAKE256_RATE, 2, b"tamper");
-        // Flip a state bit inside the second permutation, which breaks the round
-        // that produced it and the squeeze that reads it.
         let cell = instance.trace.get(11, SEG_ROWS + 3);
         instance
             .trace

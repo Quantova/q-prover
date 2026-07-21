@@ -1,4 +1,3 @@
-//! Hint application for the verify relation.
 
 use crate::air::{Air, TraceTable};
 use crate::decompose::{decompose, ALPHA, GAMMA2, HIGH_COUNT};
@@ -9,7 +8,6 @@ const HIGH_BITS: usize = 4;
 const LOW_BITS: usize = 20;
 const POS_BITS: usize = 18;
 
-/// The input coefficient column, relative to the piece base.
 pub const COL_R: usize = 0;
 const COL_H: usize = 1;
 const COL_R1: usize = 2;
@@ -28,7 +26,6 @@ const COL_DPOS_BITS: usize = COL_R0S_SLACK + LOW_BITS;
 const COL_DPOS_SLACK: usize = COL_DPOS_BITS + POS_BITS;
 const COL_R1U_BITS: usize = COL_DPOS_SLACK + POS_BITS;
 
-/// The column width of the hint recovery piece.
 pub const WIDTH: usize = COL_R1U_BITS + HIGH_BITS;
 
 fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
@@ -42,7 +39,6 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     acc
 }
 
-/// The high bits the verifier recovers by applying the hint bit to the
 pub fn use_hint(h: u64, r: u64) -> u64 {
     let (r1, r0c, _) = decompose(r);
     if h == 0 {
@@ -52,7 +48,6 @@ pub fn use_hint(h: u64, r: u64) -> u64 {
     (r1 as i64 + delta).rem_euclid(HIGH_COUNT as i64) as u64
 }
 
-/// Adds the hint recovery constraints at the given column base, so the piece can
 pub fn add_constraints(air: &mut Air, base: usize) {
     let alpha = Felt::new(ALPHA);
     let modulus = Felt::new(Q);
@@ -72,8 +67,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     let hi = base + COL_HI;
     let lo = base + COL_LO;
 
-    // The decomposition relation and its canonical gates, as in the decompose
-    // module.
     air.add_single_row(1, move |row| {
         row[r]
             .sub(row[r1].mul(alpha))
@@ -97,8 +90,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_R0S_SLACK, LOW_BITS).sub(low_bound.sub(row[r0s]))
     });
 
-    // The sign of the centered low part. The positive flag is one exactly when
-    // the shifted low part is above gamma2, which the shifted remainder pins.
     air.add_single_row(2, move |row| row[pos].mul(row[pos].sub(Felt::ONE)));
     air.add_single_row(1, move |row| {
         row[dpos].sub(row[r0s]).add(row[pos].mul(gamma2_plus_one))
@@ -110,14 +101,10 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_DPOS_SLACK, POS_BITS).sub(gamma2.sub(row[dpos]))
     });
 
-    // The hint bit and the wrap bits.
     air.add_single_row(2, move |row| row[h].mul(row[h].sub(Felt::ONE)));
     air.add_single_row(2, move |row| row[hi].mul(row[hi].sub(Felt::ONE)));
     air.add_single_row(2, move |row| row[lo].mul(row[lo].sub(Felt::ONE)));
 
-    // The used high part is the high part shifted by the hint direction, modulo
-    // the high count. The direction is plus one when the sign flag is set and
-    // minus one otherwise, taken only when the hint is set.
     air.add_single_row(2, move |row| {
         let direction = row[pos].add(row[pos]).sub(Felt::ONE);
         row[r1u]
@@ -130,7 +117,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_R1U_BITS, HIGH_BITS).sub(row[r1u])
     });
 
-    // The high part range.
     for k in 0..HIGH_BITS {
         let col = base + COL_R1_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
@@ -151,7 +137,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     }
 }
 
-/// Builds the hint recovery description of the given length. The length must be
 pub fn hint_air(length: usize) -> Air {
     let mut air = Air::new(WIDTH, length);
     add_constraints(&mut air, 0);
@@ -164,7 +149,6 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
     }
 }
 
-/// Fills one hint recovery row at the given column base.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, r: u64, h: u64) {
     let (r1, r0c, kc) = decompose(r);
     let r0s = (r0c + GAMMA2 as i64) as u64;
@@ -220,17 +204,12 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, r: u64, h: u64)
     set_bits(trace, base + COL_R1U_BITS, row, r1u, HIGH_BITS);
 }
 
-/// A filled hint recovery batch with its description.
 pub struct HintBatch {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The number of real coefficients before padding.
     pub count: usize,
 }
 
-/// Lays out a trace that recovers the used high bits for a batch of coefficient
 pub fn hint_batch(pairs: &[(u64, u64)]) -> HintBatch {
     let count = pairs.len();
     let length = count.next_power_of_two().max(2);
@@ -250,7 +229,6 @@ pub fn hint_batch(pairs: &[(u64, u64)]) -> HintBatch {
     }
 }
 
-/// Reads the recovered high part of a row from a filled trace.
 pub fn recovered_high(trace: &TraceTable, row: usize) -> u64 {
     trace.get(COL_R1U, row).to_u64()
 }
@@ -286,7 +264,6 @@ mod tests {
 
     #[test]
     fn a_set_hint_moves_the_high_part() {
-        // A coefficient with a positive low part moves up by one under the hint.
         let r = ALPHA + 100;
         let (r1, r0c, _) = decompose(r);
         assert!(r0c > 0);
@@ -305,7 +282,6 @@ mod tests {
 
     #[test]
     fn a_forged_sign_flag_is_rejected() {
-        // A coefficient with a negative low part cannot claim a positive sign.
         let r = ALPHA - 100;
         let (_, r0c, _) = decompose(r);
         assert!(r0c < 0);

@@ -1,18 +1,13 @@
-//! The two hashing steps of the module lattice verify relation.
 
 use crate::lattice::{MATRIX_COLS, MATRIX_ROWS};
 use crate::sponge::{shake_trace, SpongeInstance, SHAKE128_RATE, SHAKE256_RATE};
 
-/// The seed byte length, the public matrix seed rho.
 pub const SEED_BYTES: usize = 32;
 
-/// The message digest byte length, the collision resistant hash of the message.
 pub const MU_BYTES: usize = 64;
 
-/// The challenge encoding byte length for the parameter set, lambda over four.
 pub const CTILDE_BYTES: usize = 48;
 
-/// Builds the SHAKE128 seed of one matrix entry, the public seed joined with the
 pub fn matrix_entry_seed(rho: &[u8; SEED_BYTES], row: usize, col: usize) -> Vec<u8> {
     assert!(row < MATRIX_ROWS && col < MATRIX_COLS);
     let mut seed = Vec::with_capacity(SEED_BYTES + 2);
@@ -22,24 +17,20 @@ pub fn matrix_entry_seed(rho: &[u8; SEED_BYTES], row: usize, col: usize) -> Vec<
     seed
 }
 
-/// The number of SHAKE128 blocks that cover the candidate bytes for one ring of
 pub fn matrix_entry_blocks() -> usize {
     let candidate_bytes: usize = 256 * 3;
     candidate_bytes.div_ceil(SHAKE128_RATE)
 }
 
-/// The number of squeeze permutations of one matrix entry trace, the block count
 pub fn matrix_entry_perms() -> usize {
     matrix_entry_blocks().next_power_of_two()
 }
 
-/// Builds the sponge trace of one matrix entry expansion, the SHAKE128 stream
 pub fn matrix_entry_hash(rho: &[u8; SEED_BYTES], row: usize, col: usize) -> SpongeInstance {
     let seed = matrix_entry_seed(rho, row, col);
     shake_trace(SHAKE128_RATE, matrix_entry_perms(), &seed)
 }
 
-/// Builds the sponge trace of the challenge squeeze, the SHAKE256 stream over the
 pub fn challenge_hash(input: &[u8]) -> SpongeInstance {
     assert!(
         input.len() < SHAKE256_RATE,
@@ -48,7 +39,6 @@ pub fn challenge_hash(input: &[u8]) -> SpongeInstance {
     shake_trace(SHAKE256_RATE, 1, input)
 }
 
-/// The count of matrix entries that the expansion hashes for the parameter set.
 pub fn matrix_entries() -> usize {
     MATRIX_ROWS * MATRIX_COLS
 }
@@ -102,8 +92,6 @@ mod tests {
 
     #[test]
     fn the_challenge_stream_matches_the_crypto_shake256() {
-        // A representative single block challenge input standing in for the
-        // message digest joined with a short commitment.
         let mut input = vec![0u8; MU_BYTES];
         for (i, b) in input.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(29).wrapping_add(7);
@@ -112,7 +100,6 @@ mod tests {
         let mut expected = vec![0u8; SHAKE256_RATE];
         shake256(&input, &mut expected);
         assert_eq!(instance.output, expected);
-        // The challenge encoding is the leading bytes of the squeeze.
         assert!(CTILDE_BYTES <= instance.output.len());
     }
 

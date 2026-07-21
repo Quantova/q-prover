@@ -1,4 +1,3 @@
-//! Byte serialization for a proof.
 
 use crate::field::Felt;
 use crate::fri::{FriProof, QueryLayer, QueryProof};
@@ -25,7 +24,6 @@ fn put_merkle(out: &mut Vec<u8>, proof: &MerkleProof) {
     }
 }
 
-/// Serializes a proof to a flat byte string.
 pub fn encode_proof(proof: &StarkProof) -> Vec<u8> {
     let mut out = Vec::new();
     put_digest(&mut out, &proof.trace_root);
@@ -67,10 +65,6 @@ pub fn encode_proof(proof: &StarkProof) -> Vec<u8> {
     out
 }
 
-// A cursor over the byte string. Every read is checked, so a short or malformed
-// input returns None. A length prefix drives a push loop rather than a
-// preallocation, so a bogus length runs out of bytes on the first element
-// instead of reserving unbounded memory.
 struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
@@ -131,7 +125,6 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Reads a proof back from a byte string, or None when the bytes are truncated,
 pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
     let mut reader = Reader::new(bytes);
     let trace_root = reader.digest()?;
@@ -267,7 +260,6 @@ mod tests {
 
     #[test]
     fn a_bogus_length_does_not_allocate_unbounded() {
-        // A length prefix of all ones with no elements behind it must fail fast.
         let mut bytes = vec![0u8; 64];
         bytes.extend_from_slice(&u64::MAX.to_le_bytes());
         assert!(decode_proof(&bytes).is_none());
@@ -277,7 +269,6 @@ mod tests {
     fn a_tampered_opening_no_longer_verifies() {
         let (air, proof) = sample_proof();
         let mut bytes = encode_proof(&proof);
-        // Flip a byte inside the serialized proof and confirm it fails the check.
         let mid = bytes.len() / 2;
         bytes[mid] ^= 1;
         if let Some(decoded) = decode_proof(&bytes) {

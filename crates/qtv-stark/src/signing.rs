@@ -1,4 +1,3 @@
-//! The FIPS 204 signing derivation with a zero randomizer, arithmetized end to
 
 use crate::air::{Air, TraceTable};
 use crate::lattice::{Q, RING_DEGREE};
@@ -6,65 +5,41 @@ use crate::{challenge_ball, decompose, encode, lattice, norm, ntt, sponge};
 
 use qtv_crypto::sha3::shake256;
 
-/// The ring degree of the signature, two hundred fifty six.
 pub const N: usize = RING_DEGREE;
 
-/// The public matrix rows for ML DSA 65.
 pub const MATRIX_K: usize = lattice::MATRIX_ROWS;
 
-/// The public matrix columns for ML DSA 65.
 pub const MATRIX_L: usize = lattice::MATRIX_COLS;
 
-/// The secret signing seed length in bytes.
 pub const KEY_BYTES: usize = 32;
 
-/// The per signature randomizer length in bytes. Fixed to zero for the
 pub const RANDOMIZER_BYTES: usize = 32;
 
-/// The message representative length in bytes, the digest H(tr || m).
 pub const MU_BYTES: usize = 64;
 
-/// The number of transforms one accepted iteration runs at the ML DSA 65 scale.
 pub const TRANSFORMS_PER_ITERATION: usize = MATRIX_L + 1 + MATRIX_K + MATRIX_L + MATRIX_K;
 
-/// The number of pointwise modular products one accepted iteration runs. The
 pub const POINTWISE_PER_ITERATION: usize = MATRIX_K * MATRIX_L * N + MATRIX_L * N + MATRIX_K * N;
 
-/// The response coefficient count of one iteration, the L response polynomials.
 pub const RESPONSE_COEFFS: usize = MATRIX_L * N;
 
-/// The commitment coefficient count of one iteration, the K matrix product rows.
 pub const COMMITMENT_COEFFS: usize = MATRIX_K * N;
 
-/// The average number of signing loop iterations for the ML DSA 65 parameter set,
 pub const AVG_ITERATIONS_MILLI: u64 = 5100;
 
-/// One arithmetized piece of the signing derivation, ready to prove and verify,
 pub struct Job {
-    /// A short name for the piece.
     pub name: &'static str,
-    /// The description the prover fills.
     pub prover: Air,
-    /// The filled base trace.
     pub trace: TraceTable,
-    /// The description the verifier rebuilds from the public inputs.
     pub verifier: Air,
-    /// The low degree extension blow up the piece needs.
     pub blowup: usize,
-    /// The number of query openings.
     pub queries: usize,
-    /// How many times the piece runs inside one signing iteration.
     pub per_iteration: usize,
-    /// How many times the piece runs once per draw, outside the loop.
     pub per_draw: usize,
-    /// The trace row count.
     pub rows: usize,
-    /// The base column count.
     pub columns: usize,
 }
 
-// A representative secret signing seed. The exact bytes do not change the shape
-// or the cost of the derivation; only the trace size does.
 fn key_seed() -> [u8; KEY_BYTES] {
     let mut key = [0u8; KEY_BYTES];
     for (i, b) in key.iter_mut().enumerate() {
@@ -73,7 +48,6 @@ fn key_seed() -> [u8; KEY_BYTES] {
     key
 }
 
-// A representative message representative mu.
 fn message_representative() -> [u8; MU_BYTES] {
     let mut mu = [0u8; MU_BYTES];
     for (i, b) in mu.iter_mut().enumerate() {
@@ -82,7 +56,6 @@ fn message_representative() -> [u8; MU_BYTES] {
     mu
 }
 
-/// The single block seed the loop derives, K joined with the zero randomizer and
 pub fn seed_derivation_input() -> Vec<u8> {
     let key = key_seed();
     let mu = message_representative();
@@ -93,15 +66,12 @@ pub fn seed_derivation_input() -> Vec<u8> {
     input
 }
 
-/// The per message seed rho_pp = SHAKE256(K || 0 || mu, 64), the derived seed the
 pub fn rho_pp() -> Vec<u8> {
     let mut out = vec![0u8; 64];
     shake256(&seed_derivation_input(), &mut out);
     out
 }
 
-// A deterministic reduced value sequence for the arithmetic bands, standing in
-// for the reduced transform outputs and coefficients the real derivation carries.
 fn reduced_sequence(count: usize, seed: u64) -> Vec<u64> {
     let mut state = seed | 1;
     (0..count)
@@ -125,11 +95,8 @@ fn reduced_pairs(count: usize, seed: u64) -> Vec<(u64, u64)> {
     (0..count).map(|_| (draw(), draw())).collect()
 }
 
-/// The seed derivation piece. The sponge absorbs K, the zero randomizer, and mu,
 pub fn seed_derivation_job() -> Job {
     let input = seed_derivation_input();
-    // One permutation squeezes a full rate block, which covers the sixty four
-    // byte seed the reference reads.
     let instance = sponge::shake_trace(sponge::SHAKE256_RATE, 1, &input);
     let verifier = sponge::shake_air(sponge::SHAKE256_RATE, 1, &input, &instance.output);
     let rows = instance.trace.length();
@@ -148,16 +115,10 @@ pub fn seed_derivation_job() -> Job {
     }
 }
 
-/// The mask expansion piece for one mask polynomial. ExpandMask squeezes SHAKE256
 pub fn mask_expansion_job() -> Job {
     let mut seed = rho_pp();
-    // The two byte index of the first mask polynomial appended to rho_pp, as
-    // ExpandMask forms it.
     seed.push(0);
     seed.push(0);
-    // The mask coefficients are twenty bits each, so one polynomial reads six
-    // hundred forty bytes, five SHAKE256 blocks, rounded to a power of two segment
-    // count for the trace.
     let blocks = (N * 20 / 8).div_ceil(sponge::SHAKE256_RATE);
     let perms = blocks.next_power_of_two();
     let instance = sponge::shake_trace(sponge::SHAKE256_RATE, perms, &seed);
@@ -178,7 +139,6 @@ pub fn mask_expansion_job() -> Job {
     }
 }
 
-/// One number theoretic transform of degree two hundred fifty six, the transform
 pub fn transform_job() -> Job {
     let coeffs = reduced_sequence(N, 1364660645);
     let instance = ntt::ntt_trace(&ntt::to_layer_zero(&coeffs));
@@ -199,7 +159,6 @@ pub fn transform_job() -> Job {
     }
 }
 
-/// The transform domain pointwise products of one iteration in one batch, the
 pub fn pointwise_products_job() -> Job {
     let inputs = reduced_pairs(POINTWISE_PER_ITERATION, 2654435769);
     let batch = lattice::modmul_batch(&inputs);
@@ -220,7 +179,6 @@ pub fn pointwise_products_job() -> Job {
     }
 }
 
-/// The commitment high bits w1 = HighBits(w), one decomposition per matrix product
 pub fn high_bits_job() -> Job {
     let coeffs = reduced_sequence(COMMITMENT_COEFFS, 12648430);
     let batch = decompose::decompose_batch(&coeffs);
@@ -241,11 +199,8 @@ pub fn high_bits_job() -> Job {
     }
 }
 
-/// The challenge hash absorb, SHAKE256 over mu joined with the w1 encoding. The
 pub fn challenge_absorb_job() -> Job {
     let mu = message_representative();
-    // The commitment high bits packed two to a byte, w1Encode of the K matrix
-    // rows, the encoded commitment the challenge hash absorbs.
     let highs: Vec<u8> = (0..COMMITMENT_COEFFS)
         .map(|i| (i as u8).wrapping_mul(7) & 15)
         .collect();
@@ -271,7 +226,6 @@ pub fn challenge_absorb_job() -> Job {
     }
 }
 
-/// The commitment high bit packing, w1Encode, folding two four bit high parts into
 pub fn w1_encode_job() -> Job {
     let highs: Vec<u8> = (0..COMMITMENT_COEFFS)
         .map(|i| (i as u8).wrapping_mul(7) & 15)
@@ -294,7 +248,6 @@ pub fn w1_encode_job() -> Job {
     }
 }
 
-/// The challenge ball sampling, SampleInBall, turning the challenge squeeze into
 pub fn sample_in_ball_job() -> Job {
     let mut c_tilde = [0u8; 48];
     for (i, b) in c_tilde.iter_mut().enumerate() {
@@ -320,7 +273,6 @@ pub fn sample_in_ball_job() -> Job {
     }
 }
 
-/// The response infinity norm, the check that every coefficient of z = y + c s1
 pub fn response_norm_job() -> Job {
     let coeffs: Vec<u64> = (0..RESPONSE_COEFFS as u64)
         .map(|i| {
@@ -350,7 +302,6 @@ pub fn response_norm_job() -> Job {
     }
 }
 
-/// The low bits r0 = LowBits(w - c s2), one decomposition per commitment
 pub fn low_bits_job() -> Job {
     let coeffs = reduced_sequence(COMMITMENT_COEFFS, 305419896);
     let batch = decompose::decompose_batch(&coeffs);
@@ -371,7 +322,6 @@ pub fn low_bits_job() -> Job {
     }
 }
 
-/// The low bits magnitude bound, the check that the centered low part r0 sits
 pub fn low_bits_norm_job() -> Job {
     let coeffs: Vec<u64> = (0..COMMITMENT_COEFFS as u64)
         .map(|i| {
@@ -401,7 +351,6 @@ pub fn low_bits_norm_job() -> Job {
     }
 }
 
-/// Every distinct arithmetized piece of the signing derivation, each carrying the
 pub fn signing_jobs() -> Vec<Job> {
     vec![
         seed_derivation_job(),
@@ -428,8 +377,6 @@ mod tests {
     fn the_seed_derivation_pins_the_zero_randomizer() {
         let input = seed_derivation_input();
         assert_eq!(input.len(), KEY_BYTES + RANDOMIZER_BYTES + MU_BYTES);
-        // The randomizer field is the thirty two zero bytes between the key and
-        // the message representative.
         assert!(input[KEY_BYTES..KEY_BYTES + RANDOMIZER_BYTES]
             .iter()
             .all(|b| *b == 0));
@@ -445,8 +392,6 @@ mod tests {
 
     #[test]
     fn the_multiplicities_match_the_parameter_set() {
-        // Twenty three transforms and ten thousand four hundred ninety six
-        // pointwise products per iteration.
         assert_eq!(TRANSFORMS_PER_ITERATION, 23);
         assert_eq!(POINTWISE_PER_ITERATION, 10496);
         assert_eq!(RESPONSE_COEFFS, 1280);
@@ -455,8 +400,6 @@ mod tests {
 
     #[test]
     fn every_job_arithmetic_holds() {
-        // The permutation carrying pieces are checked under fixed challenges; the
-        // rest hold on the base trace directly.
         let challenges = [Felt::new(305419896), Felt::new(2596069104)];
         for job in signing_jobs() {
             let ok = if job.prover.num_challenges() == 0 {
@@ -473,10 +416,7 @@ mod tests {
     fn the_job_set_covers_the_iteration_and_the_draw() {
         let jobs = signing_jobs();
         let per_draw: usize = jobs.iter().map(|j| j.per_draw).sum();
-        // Exactly one piece runs once per draw outside the loop, the seed
-        // derivation.
         assert_eq!(per_draw, 1);
-        // The transform and the mask expansion carry the loop multiplicities.
         let transforms = jobs
             .iter()
             .find(|j| j.name.starts_with("number theoretic"))
@@ -489,8 +429,6 @@ mod tests {
         assert_eq!(mask.per_iteration, MATRIX_L);
     }
 
-    // A small proof over the cheapest piece confirms the job descriptions prove
-    // and verify through the protocol, not only that the arithmetic holds.
     #[test]
     fn a_representative_job_proves_and_verifies() {
         let job = sample_in_ball_job();

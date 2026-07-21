@@ -1,4 +1,3 @@
-//! A high level entry point over the fused module lattice certificate.
 
 use qtv_crypto::sha3::shake256;
 
@@ -8,13 +7,10 @@ use crate::norm::NORM_BOUND;
 use crate::sponge::{shake_output, SHAKE256_RATE};
 use crate::stark::{prove, verify, StarkParams};
 
-/// The low degree extension blow up the fused certificate needs for its degree
 pub const CERT_BLOWUP: usize = 32;
 
-/// The number of query openings that back the certificate soundness.
 pub const CERT_QUERIES: usize = 32;
 
-/// The largest message the fused certificate absorbs, one SHAKE256 rate block.
 pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 
 fn params() -> StarkParams {
@@ -24,20 +20,12 @@ fn params() -> StarkParams {
     }
 }
 
-// The per segment hint bit, one bit per squeeze word, derived from the message
-// so the certificate is reproducible from its public inputs alone. The hint
-// recovery band proves the recomposition relation over these bits; they are
-// witness data and never reach the verifier.
 fn derive_hints(message: &[u8], segments: usize) -> Vec<u64> {
     let mut bits = vec![0u8; segments.max(1)];
     shake256(message, &mut bits);
     bits.iter().map(|b| (*b & 1) as u64).collect()
 }
 
-// The stand in member responses, one per segment, when the caller supplies none.
-// Each is derived from the message and reduced below the response bound, so the
-// norm band holds and the certificate still exercises the matrix vector product
-// and the norm over non trivial values.
 fn derive_responses(message: &[u8], segments: usize) -> Vec<u64> {
     let mut bytes = vec![0u8; segments.max(1) * 4];
     shake256(message, &mut bytes);
@@ -54,16 +42,12 @@ fn derive_responses(message: &[u8], segments: usize) -> Vec<u64> {
         .collect()
 }
 
-/// A self contained batch certificate: the segment count and the serialized
 #[derive(Clone)]
 pub struct BatchProof {
-    /// The number of SHAKE256 squeeze segments, one hash derived coefficient each.
     pub segments: usize,
-    /// The serialized proof bytes.
     pub proof: Vec<u8>,
 }
 
-/// Proves the fused certificate over a public message and the member responses,
 pub fn prove_batch(message: &[u8], segments: usize, responses: &[u64]) -> BatchProof {
     assert!(
         message.len() <= MAX_MESSAGE_BYTES,
@@ -86,7 +70,6 @@ pub fn prove_batch(message: &[u8], segments: usize, responses: &[u64]) -> BatchP
     }
 }
 
-/// Checks a batch certificate against the public message it claims. The squeeze
 pub fn verify_batch(message: &[u8], cert: &BatchProof) -> bool {
     if message.len() > MAX_MESSAGE_BYTES || cert.segments == 0 {
         return false;
@@ -101,7 +84,6 @@ pub fn verify_batch(message: &[u8], cert: &BatchProof) -> bool {
 }
 
 impl BatchProof {
-    /// Serializes the certificate to bytes, the segment count then the proof.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(8 + self.proof.len());
         out.extend_from_slice(&(self.segments as u64).to_le_bytes());
@@ -109,7 +91,6 @@ impl BatchProof {
         out
     }
 
-    /// Reads a certificate back from bytes, or None when they are too short.
     pub fn from_bytes(bytes: &[u8]) -> Option<BatchProof> {
         if bytes.len() < 8 {
             return None;
@@ -122,7 +103,6 @@ impl BatchProof {
         })
     }
 
-    /// The serialized size of the certificate in bytes.
     pub fn size(&self) -> usize {
         8 + self.proof.len()
     }
@@ -147,8 +127,6 @@ mod tests {
 
     #[test]
     fn a_certificate_over_supplied_responses_verifies() {
-        // Supplied member responses, one small positive and one negative
-        // representative below the modulus, both inside the response bound.
         let message = b"real member responses batch cert";
         let responses = [12_345u64, crate::lattice::Q - 6_789];
         let cert = prove_batch(message, 2, &responses);

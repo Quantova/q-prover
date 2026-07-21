@@ -1,4 +1,3 @@
-//! Number theoretic transform over the signature modulus, wired into one trace.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
@@ -25,12 +24,10 @@ const D_BITS: usize = S_SLACK + RESIDUE_BITS;
 const D_SLACK: usize = D_BITS + RESIDUE_BITS;
 const SEL0: usize = D_SLACK + RESIDUE_BITS;
 
-/// The number of base columns for a transform whose layer count is layers.
 fn width(layers: u32) -> usize {
     SEL0 + layers as usize
 }
 
-/// Modular exponentiation over the signature modulus.
 fn pow_mod(base: u64, mut exp: u64, modulus: u64) -> u64 {
     let mut result = 1u128;
     let mut b = base as u128 % modulus as u128;
@@ -44,7 +41,6 @@ fn pow_mod(base: u64, mut exp: u64, modulus: u64) -> u64 {
     result as u64
 }
 
-/// A primitive n-th root of unity over the signature modulus. The modulus minus
 pub fn root_of_unity_q(n: usize) -> u64 {
     assert!(n.is_power_of_two());
     let exponent = (Q - 1) / n as u64;
@@ -74,7 +70,6 @@ fn set_bits(trace: &mut TraceTable, base: usize, row: usize, value: u64) {
     }
 }
 
-/// Reverses the low log_n bits of an index.
 fn bit_reverse(mut value: usize, log_n: u32) -> usize {
     let mut result = 0usize;
     for _ in 0..log_n {
@@ -84,19 +79,13 @@ fn bit_reverse(mut value: usize, log_n: u32) -> usize {
     result
 }
 
-/// A filled transform trace with its description and public endpoints.
 pub struct NttInstance {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled base trace.
     pub trace: TraceTable,
-    /// The layer zero input in the order the butterflies consume it.
     pub input: Vec<u64>,
-    /// The layer L output the transform produces.
     pub output: Vec<u64>,
 }
 
-// A single butterfly at one layer.
 struct Butterfly {
     row: usize,
     step: u32,
@@ -105,9 +94,6 @@ struct Butterfly {
     twiddle: u64,
 }
 
-// The decimation in time schedule, interleaved so that the step of a row is the
-// row index modulo the layer count. This makes the layer selector a periodic
-// rotation that a short constraint can pin.
 fn schedule(n: usize, layers: u32, omega: u64) -> Vec<Butterfly> {
     let mut out = Vec::with_capacity((n / 2) * layers as usize);
     for step in 0..layers {
@@ -138,7 +124,6 @@ fn identity(layer: u32, index: usize, n: usize) -> u64 {
     (layer as u64) * (n as u64) + index as u64
 }
 
-/// Builds the transform trace over the given layer zero input. The input is
 pub fn ntt_trace(input: &[u64]) -> NttInstance {
     let n = input.len();
     assert!(
@@ -194,7 +179,6 @@ pub fn ntt_trace(input: &[u64]) -> NttInstance {
         state[bf.i1] = d;
     }
 
-    // The rotating one hot layer selector, hot on the column of the current step.
     for row in 0..rows {
         let step = row % layers as usize;
         trace.set(SEL0 + step, row, Felt::ONE);
@@ -210,7 +194,6 @@ pub fn ntt_trace(input: &[u64]) -> NttInstance {
     }
 }
 
-/// Builds the transform description for a ring degree of n over the given public
 pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
     let layers = n.trailing_zeros();
     let rows = (n / 2) * layers as usize;
@@ -219,7 +202,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
     let modulus_minus_one = Felt::new(Q - 1);
     let last = layers as usize - 1;
 
-    // The twiddle product residue and its canonical range.
     air.add_single_row(2, move |row| {
         row[W].mul(row[B]).sub(row[MQ].mul(modulus)).sub(row[M])
     });
@@ -228,7 +210,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         recompose(row, M_SLACK).sub(modulus_minus_one.sub(row[M]))
     });
 
-    // The add output residue with its carry and canonical range.
     air.add_single_row(1, move |row| {
         row[A].add(row[M]).sub(row[CS].mul(modulus)).sub(row[S])
     });
@@ -238,7 +219,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         recompose(row, S_SLACK).sub(modulus_minus_one.sub(row[S]))
     });
 
-    // The subtract output residue with its borrow and canonical range.
     air.add_single_row(1, move |row| {
         row[A].sub(row[M]).add(row[CD].mul(modulus)).sub(row[D])
     });
@@ -248,7 +228,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         recompose(row, D_SLACK).sub(modulus_minus_one.sub(row[D]))
     });
 
-    // Every range bit is zero or one.
     for base in [M_BITS, M_SLACK, S_BITS, S_SLACK, D_BITS, D_SLACK] {
         for k in 0..RESIDUE_BITS {
             let col = base + k;
@@ -256,9 +235,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         }
     }
 
-    // The rotating one hot selector, pinned at the first row and shifted by one
-    // column each step, so column SEL0 plus k is hot exactly on the rows whose
-    // step is k.
     air.add_boundary(SEL0, 0, Felt::ONE);
     for k in 1..layers as usize {
         air.add_boundary(SEL0 + k, 0, Felt::ZERO);
@@ -269,10 +245,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         air.add_wrap_transition(1, move |current, next| next[target].sub(current[source]));
     }
 
-    // The permutation wiring. The compression folds a value with its wire
-    // identity under one challenge, and the product runs under a second. Layer
-    // zero consumers and layer L producers are masked out, since those cells are
-    // the public endpoints.
     let alpha = air.add_challenge();
     let gamma = air.add_challenge();
     let sel_first = SEL0;
@@ -293,9 +265,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         },
     );
 
-    // Pin the public endpoints. The layer zero inputs are the a and b cells of
-    // the first step rows, the layer L outputs are the s and d cells of the last
-    // step rows.
     let half = n / 2;
     for p in 0..half {
         let first_row = p * layers as usize;
@@ -309,7 +278,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
     air
 }
 
-/// The natural coefficient order rearranged into the layer zero input order.
 pub fn to_layer_zero(coeffs: &[u64]) -> Vec<u64> {
     let n = coeffs.len();
     let log_n = n.trailing_zeros();
@@ -381,13 +349,9 @@ mod tests {
 
     #[test]
     fn a_broken_wire_is_rejected() {
-        // Corrupt an internal produced value and its bit expansions so the local
-        // arithmetic still holds but the wiring no longer matches the consumer.
         let mut instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
         let challenges = [Felt::new(305419896), Felt::new(2596069104)];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
-        // Row 1 is step one, an internal producer. Swap its two outputs, which
-        // keeps the multiset within the row but breaks the per identity match.
         let s = instance.trace.get(S, 1);
         let d = instance.trace.get(D, 1);
         instance.trace.set(S, 1, d);

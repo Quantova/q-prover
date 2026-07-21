@@ -1,18 +1,13 @@
-//! The Qudros f permutation, the core of SHA3 and SHAKE, and its arithmetization.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 
-/// The number of lanes in the state.
 pub const LANES: usize = 25;
 
-/// The bit width of a lane.
 pub const LANE_BITS: usize = 64;
 
-/// The number of rounds in the standard permutation.
 pub const QUDROS_ROUNDS: usize = 24;
 
-/// The rotation offsets of the rho step, indexed by the lane coordinates x and y
 const RHO: [[u32; 5]; 5] = [
     [0, 36, 3, 41, 18],
     [1, 44, 10, 45, 2],
@@ -21,7 +16,6 @@ const RHO: [[u32; 5]; 5] = [
     [27, 20, 39, 8, 14],
 ];
 
-/// Generates the round constants of the iota step by the FIPS 202 linear
 pub fn round_constants(count: usize) -> Vec<u64> {
     let mut lfsr: u8 = 1;
     let mut step = || {
@@ -46,7 +40,6 @@ pub fn round_constants(count: usize) -> Vec<u64> {
     out
 }
 
-/// Applies one round of the permutation to a state under the round constant.
 pub fn qudros_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
     let mut s = *state;
 
@@ -86,7 +79,6 @@ pub fn qudros_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
     s
 }
 
-/// Runs the given number of rounds and records the state before each round and
 pub fn qudros_states(input: &[u64; LANES], rounds: usize) -> Vec<[u64; LANES]> {
     let rc = round_constants(rounds);
     let mut states = Vec::with_capacity(rounds + 1);
@@ -99,24 +91,20 @@ pub fn qudros_states(input: &[u64; LANES], rounds: usize) -> Vec<[u64; LANES]> {
     states
 }
 
-/// The full twenty four round permutation.
 pub fn qudros_f1600(input: &[u64; LANES]) -> [u64; LANES] {
     let states = qudros_states(input, QUDROS_ROUNDS);
     states[QUDROS_ROUNDS]
 }
 
-/// An exclusive or of two field elements that are constrained to be bits.
 pub fn xor2(a: Felt, b: Felt) -> Felt {
     let ab = a.mul(b);
     a.add(b).sub(ab).sub(ab)
 }
 
-/// An exclusive or of three bits.
 pub fn xor3(a: Felt, b: Felt, c: Felt) -> Felt {
     xor2(xor2(a, b), c)
 }
 
-/// An exclusive or over a slice of bits.
 pub fn xor_all(bits: &[Felt]) -> Felt {
     let mut acc = Felt::ZERO;
     for bit in bits {
@@ -125,10 +113,6 @@ pub fn xor_all(bits: &[Felt]) -> Felt {
     acc
 }
 
-// The column layout of the arithmetized permutation. The state bits come first,
-// then the theta parity column, the round constant bits, the state half lanes
-// that bind the public bits, and the round constant half lanes. The offsets are
-// shared with the sponge, which reuses the same block per permutation.
 pub(crate) const S_OFF: usize = 0;
 pub(crate) const STATE_BITS: usize = LANES * LANE_BITS;
 pub(crate) const C_OFF: usize = S_OFF + STATE_BITS;
@@ -138,10 +122,8 @@ pub(crate) const HALF_OFF: usize = RC_OFF + LANE_BITS;
 pub(crate) const HALVES: usize = 2 * LANES;
 pub(crate) const RCHALF_OFF: usize = HALF_OFF + HALVES;
 
-/// The full column width of the permutation trace, also one qudros block of the
 pub const QUDROS_WIDTH: usize = RCHALF_OFF + 2;
 
-/// The number of rows in the permutation trace, a power of two above the round
 pub const QUDROS_TRACE_ROWS: usize = 32;
 
 pub(crate) fn s_idx(x: usize, y: usize, z: usize) -> usize {
@@ -152,7 +134,6 @@ fn c_idx(x: usize, z: usize) -> usize {
     C_OFF + x * LANE_BITS + z
 }
 
-// The theta output bit at the coordinates x, y, z read from the current row.
 fn theta_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
     let a = row[s_idx(x, y, z)];
     let c1 = row[c_idx((x + 4) % 5, z)];
@@ -160,8 +141,6 @@ fn theta_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
     xor3(a, c1, c2)
 }
 
-// The rho and pi rewired bit at the coordinates px, py, z, read from the theta
-// output of its source lane.
 fn b_bit(row: &[Felt], px: usize, py: usize, z: usize) -> Felt {
     let sx = (px + 3 * py) % 5;
     let sy = px;
@@ -170,8 +149,6 @@ fn b_bit(row: &[Felt], px: usize, py: usize, z: usize) -> Felt {
     theta_bit(row, sx, sy, sz)
 }
 
-// The round output bit at x, y, z, chi over the rewired theta with iota on the
-// zero lane.
 pub(crate) fn round_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
     let b0 = b_bit(row, x, y, z);
     let b1 = b_bit(row, (x + 1) % 5, y, z);
@@ -185,7 +162,6 @@ pub(crate) fn round_bit(row: &[Felt], x: usize, y: usize, z: usize) -> Felt {
     }
 }
 
-// The field value of a thirty two bit half lane from its bits.
 pub(crate) fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
     let two = Felt::new(2);
     let mut acc = Felt::ZERO;
@@ -197,7 +173,6 @@ pub(crate) fn half_value(row: &[Felt], base_bit: usize, start: usize) -> Felt {
     acc
 }
 
-/// Adds the per row structural constraints of one qudros block to the air, the
 pub(crate) fn add_block_constraints(air: &mut Air, base: usize) {
     for i in 0..STATE_BITS {
         let col = base + S_OFF + i;
@@ -236,14 +211,11 @@ pub(crate) fn add_block_constraints(air: &mut Air, base: usize) {
     air.add_single_row(1, move |row| row[rc_hi].sub(half_value(row, rc_base, 32)));
 }
 
-/// Builds the description of the permutation over a public input and output. The
 pub fn qudros_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
     let mut air = Air::new(QUDROS_WIDTH, QUDROS_TRACE_ROWS);
 
     add_block_constraints(&mut air, 0);
 
-    // The round relation, the next state bit is chi over the rewired theta of the
-    // current state with iota folded in on the zero lane.
     for x in 0..5 {
         for y in 0..5 {
             for z in 0..LANE_BITS {
@@ -255,7 +227,6 @@ pub fn qudros_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
         }
     }
 
-    // The public input at the first row and the output at the round count row.
     for l in 0..LANES {
         let lo = HALF_OFF + 2 * l;
         let hi = HALF_OFF + 2 * l + 1;
@@ -265,7 +236,6 @@ pub fn qudros_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
         air.add_boundary(hi, QUDROS_ROUNDS, Felt::new(output[l] >> 32));
     }
 
-    // The round constant at every row, so the iota step reads a pinned value.
     let rc = round_constants(QUDROS_TRACE_ROWS);
     for (r, value) in rc.iter().enumerate() {
         air.add_boundary(RCHALF_OFF, r, Felt::new(value & 4294967295));
@@ -275,7 +245,6 @@ pub fn qudros_air(input: &[u64; LANES], output: &[u64; LANES]) -> Air {
     air
 }
 
-/// Fills one qudros block of a trace row, the state bits, the theta parity, the
 pub(crate) fn fill_block_row(
     trace: &mut TraceTable,
     base: usize,
@@ -324,17 +293,12 @@ fn fill_row(trace: &mut TraceTable, row: usize, state: &[u64; LANES], rc: u64) {
     fill_block_row(trace, 0, row, state, rc);
 }
 
-/// A filled permutation trace with its description and the output state.
 pub struct QudrosInstance {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The output after the standard round count.
     pub output: [u64; LANES],
 }
 
-/// Builds the permutation trace over the input state. The trace runs further
 pub fn qudros_trace(input: &[u64; LANES]) -> QudrosInstance {
     let rc = round_constants(QUDROS_TRACE_ROWS);
     let mut states: Vec<[u64; LANES]> = Vec::with_capacity(QUDROS_TRACE_ROWS);
@@ -371,7 +335,6 @@ mod tests {
         }
     }
 
-    // The twenty four standard round constants from the crypto crate table.
     const REFERENCE_RC: [u64; 24] = [
         1,
         32898,
@@ -405,8 +368,6 @@ mod tests {
         assert_eq!(rc, REFERENCE_RC);
     }
 
-    // A byte oriented sponge built on the reference permutation, so a match with
-    // the crypto crate confirms the permutation.
     fn reference_sponge(rate: usize, domain: u8, input: &[u8], out_len: usize) -> Vec<u8> {
         let mut lanes = [0u64; LANES];
         let absorb = |lanes: &mut [u64; LANES], block: &[u8]| {
@@ -475,7 +436,6 @@ mod tests {
         }
         let permuted = qudros_f1600(&state);
         assert_ne!(permuted, state);
-        // Two distinct inputs give distinct outputs at this sample.
         let mut other = state;
         other[3] ^= 1;
         assert_ne!(qudros_f1600(&other), permuted);
@@ -514,8 +474,6 @@ mod tests {
     #[test]
     fn a_tampered_state_bit_is_rejected() {
         let mut instance = qudros_trace(&sample_input());
-        // Flip a state bit on an interior round, which breaks the round relation
-        // that produced it.
         let cell = instance.trace.get(37, 5);
         instance.trace.set(37, 5, xor2(cell, Felt::ONE));
         assert!(!instance.air.is_satisfied(&instance.trace));

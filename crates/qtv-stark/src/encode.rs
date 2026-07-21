@@ -1,9 +1,7 @@
-//! The encodings that bridge the field element pieces to the hash byte input.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 
-/// The bit width of a packed high part.
 pub const NIBBLE_BITS: usize = 4;
 
 const COL_LO: usize = 0;
@@ -12,16 +10,12 @@ const COL_BYTE: usize = 2;
 const COL_LO_BITS: usize = 3;
 const COL_HI_BITS: usize = COL_LO_BITS + NIBBLE_BITS;
 
-/// The column width of the high bit packing piece.
 pub const WIDTH: usize = COL_HI_BITS + NIBBLE_BITS;
 
-/// The low nibble column relative to the piece base, the even high part.
 pub const LO_COL: usize = COL_LO;
 
-/// The high nibble column relative to the piece base, the odd high part.
 pub const HI_COL: usize = COL_HI;
 
-/// The packed byte column relative to the piece base.
 pub const BYTE_COL: usize = COL_BYTE;
 
 fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
@@ -35,7 +29,6 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     acc
 }
 
-/// Packs a sequence of four bit high parts into bytes, two to a byte low nibble
 pub fn w1_encode(highs: &[u8]) -> Vec<u8> {
     assert!(
         highs.len() % 2 == 0,
@@ -47,19 +40,16 @@ pub fn w1_encode(highs: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// The two index bytes appended to the public seed for a matrix entry, the column
 pub fn seed_index_bytes(row: usize, col: usize) -> [u8; 2] {
     [col as u8, row as u8]
 }
 
-/// Adds the high bit packing constraints at the given column base, so the piece can
 pub fn add_constraints(air: &mut Air, base: usize) {
     let sixteen = Felt::new(16);
     let lo = base + COL_LO;
     let hi = base + COL_HI;
     let byte = base + COL_BYTE;
 
-    // Each nibble recomposes from its bits, which forces it below sixteen.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_LO_BITS, NIBBLE_BITS).sub(row[lo])
     });
@@ -67,13 +57,10 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_HI_BITS, NIBBLE_BITS).sub(row[hi])
     });
 
-    // The byte is the low nibble in the low half and the high nibble in the high
-    // half.
     air.add_single_row(1, move |row| {
         row[byte].sub(row[lo]).sub(row[hi].mul(sixteen))
     });
 
-    // Every nibble bit is zero or one.
     for start in [COL_LO_BITS, COL_HI_BITS] {
         for k in 0..NIBBLE_BITS {
             let col = base + start + k;
@@ -82,7 +69,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     }
 }
 
-/// Builds the high bit packing description of the given length. The length must be
 pub fn encode_air(length: usize) -> Air {
     let mut air = Air::new(WIDTH, length);
     add_constraints(&mut air, 0);
@@ -95,7 +81,6 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
     }
 }
 
-/// Fills one high bit packing row at the given column base over one nibble pair.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, lo: u8, hi: u8) {
     let lo = (lo & 15) as u64;
     let hi = (hi & 15) as u64;
@@ -106,17 +91,12 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, lo: u8, hi: u8)
     set_bits(trace, base + COL_HI_BITS, row, hi, NIBBLE_BITS);
 }
 
-/// A filled high bit packing batch with its description and the packed bytes.
 pub struct EncodeBatch {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The packed bytes, the w1 encoding of the high parts.
     pub bytes: Vec<u8>,
 }
 
-/// Lays out a trace that packs a sequence of high parts into bytes, two to a row.
 pub fn encode_batch(highs: &[u8]) -> EncodeBatch {
     let mut padded = highs.to_vec();
     if padded.len() % 2 == 1 {
@@ -202,7 +182,6 @@ mod tests {
     fn an_out_of_range_nibble_is_rejected() {
         let batch = encode_batch(&sample_highs());
         let mut trace = batch.trace;
-        // A nibble above fifteen keeps the byte identity only by leaving the range.
         trace.set(LO_COL, 2, Felt::new(16));
         trace.set(BYTE_COL, 2, trace.get(BYTE_COL, 2).add(Felt::new(16)));
         assert!(!batch.air.is_satisfied(&trace));

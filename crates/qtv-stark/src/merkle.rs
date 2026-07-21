@@ -1,17 +1,13 @@
-//! Merkle commitments for the hash based STARK backend.
 
 use crate::field::Felt;
 use qtv_crypto::sha3::sha3_256;
 
-/// A thirty two byte commitment digest.
 pub type Digest = [u8; 32];
 
-/// Hashes a single field element into a leaf digest.
 pub fn hash_leaf(value: Felt) -> Digest {
     sha3_256(&value.to_u64().to_le_bytes())
 }
 
-/// Hashes a row of field elements into one leaf digest.
 pub fn hash_row(values: &[Felt]) -> Digest {
     let mut preimage = Vec::with_capacity(values.len() * 8);
     for value in values {
@@ -20,21 +16,16 @@ pub fn hash_row(values: &[Felt]) -> Digest {
     sha3_256(&preimage)
 }
 
-/// A Merkle tree built over a vector of leaf digests.
 pub struct MerkleTree {
     layers: Vec<Vec<Digest>>,
 }
 
-/// An authentication path that ties one leaf to a committed root.
 pub struct MerkleProof {
-    /// The index of the opened leaf in the base layer.
     pub leaf_index: usize,
-    /// The sibling digests from the leaf up to the root.
     pub siblings: Vec<Digest>,
 }
 
 impl MerkleTree {
-    /// Commits to a set of leaves and builds the internal layers.
     pub fn commit(leaves: &[Digest]) -> Self {
         let mut layers = vec![leaves.to_vec()];
         while layers.last().map(|layer| layer.len()).unwrap_or(0) > 1 {
@@ -56,7 +47,6 @@ impl MerkleTree {
         MerkleTree { layers }
     }
 
-    /// Returns the commitment root.
     pub fn root(&self) -> Digest {
         self.layers
             .last()
@@ -64,7 +54,6 @@ impl MerkleTree {
             .unwrap_or([0u8; 32])
     }
 
-    /// Opens the leaf at an index and returns its authentication path.
     pub fn open(&self, leaf_index: usize) -> MerkleProof {
         let mut siblings = Vec::new();
         let mut index = leaf_index;
@@ -91,7 +80,6 @@ impl MerkleTree {
     }
 }
 
-/// Verifies an authentication path against a committed root.
 pub fn verify(root: &Digest, leaf: &Digest, proof: &MerkleProof) -> bool {
     let mut acc = *leaf;
     let mut index = proof.leaf_index;
@@ -106,7 +94,6 @@ pub fn verify(root: &Digest, leaf: &Digest, proof: &MerkleProof) -> bool {
     &acc == root
 }
 
-/// Combines two child digests into a parent digest with SHA3 256.
 fn hash_pair(left: &Digest, right: &Digest) -> Digest {
     let mut preimage = [0u8; 64];
     preimage[..32].copy_from_slice(left);

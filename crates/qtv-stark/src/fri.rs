@@ -1,38 +1,29 @@
-//! FRI folding for the low degree test.
 
 use crate::field::{root_of_unity, Felt, MODULUS};
 use crate::merkle::{hash_leaf, Digest, MerkleProof, MerkleTree};
 use qtv_crypto::sha3::sha3_256;
 
-/// Parameters that fix the FRI schedule.
 #[derive(Clone, Debug)]
 pub struct FriParams {
-    /// The base two logarithm of the initial evaluation domain size.
     pub log_domain_size: u32,
-    /// The number of query openings that back the soundness argument.
     pub num_queries: usize,
-    /// The blow up factor of the low degree extension. Must be a power of two.
     pub blowup: usize,
 }
 
 impl FriParams {
-    /// The initial evaluation domain size.
     pub fn domain_size(&self) -> usize {
         1usize << self.log_domain_size
     }
 
-    /// The number of folding rounds, one per halving down to the blow up size.
     pub fn rounds(&self) -> usize {
         (self.log_domain_size - self.blowup.trailing_zeros()) as usize
     }
 
-    /// The exclusive degree bound the test enforces on the committed vector.
     pub fn degree_bound(&self) -> usize {
         self.domain_size() / self.blowup
     }
 }
 
-/// Combines a pair of sibling evaluations into a single folded evaluation.
 pub fn fold_pair(low: Felt, high: Felt, challenge: Felt, x_inv: Felt) -> Felt {
     let inv_two = Felt::new(2).inv();
     let sum = low.add(high);
@@ -40,7 +31,6 @@ pub fn fold_pair(low: Felt, high: Felt, challenge: Felt, x_inv: Felt) -> Felt {
     sum.add(challenge.mul(diff).mul(x_inv)).mul(inv_two)
 }
 
-/// Folds an evaluation vector by two using a single challenge.
 pub fn fold_layer(evaluations: &[Felt], challenge: Felt, generator_inv: Felt) -> Vec<Felt> {
     let half = evaluations.len() / 2;
     let mut folded = Vec::with_capacity(half);
@@ -54,18 +44,15 @@ pub fn fold_layer(evaluations: &[Felt], challenge: Felt, generator_inv: Felt) ->
     folded
 }
 
-/// A running SHA3 transcript for the Fiat Shamir challenges.
 pub struct Transcript {
     state: Digest,
 }
 
 impl Transcript {
-    /// Starts an empty transcript.
     pub fn new() -> Self {
         Transcript { state: [0u8; 32] }
     }
 
-    /// Binds a byte string into the transcript state.
     pub fn absorb(&mut self, bytes: &[u8]) {
         let mut preimage = Vec::with_capacity(32 + bytes.len());
         preimage.extend_from_slice(&self.state);
@@ -73,12 +60,10 @@ impl Transcript {
         self.state = sha3_256(&preimage);
     }
 
-    /// Binds a digest into the transcript state.
     pub fn absorb_digest(&mut self, digest: &Digest) {
         self.absorb(digest);
     }
 
-    /// Binds a field element into the transcript state.
     pub fn absorb_felt(&mut self, value: Felt) {
         self.absorb(&value.to_u64().to_le_bytes());
     }
@@ -92,7 +77,6 @@ impl Transcript {
         out
     }
 
-    /// Draws a field element challenge.
     pub fn challenge_felt(&mut self) -> Felt {
         let out = self.squeeze(1);
         let mut wide: u128 = 0;
@@ -102,7 +86,6 @@ impl Transcript {
         Felt::new((wide % (MODULUS as u128)) as u64)
     }
 
-    /// Draws an index below the given bound.
     pub fn challenge_index(&mut self, bound: usize) -> usize {
         let out = self.squeeze(2);
         let mut wide: u64 = 0;
@@ -119,33 +102,21 @@ impl Default for Transcript {
     }
 }
 
-/// One opened sibling pair inside a single folding layer.
 pub struct QueryLayer {
-    /// The value at the queried position.
     pub eval: Felt,
-    /// The value at the paired position half a domain away.
     pub sibling: Felt,
-    /// The authentication path for the queried value.
     pub eval_path: MerkleProof,
-    /// The authentication path for the paired value.
     pub sibling_path: MerkleProof,
 }
 
-/// The openings that back one query across all folding layers.
 pub struct QueryProof {
-    /// The sampled position in the first folded domain.
     pub position: usize,
-    /// The opened pair at each folding layer.
     pub layers: Vec<QueryLayer>,
 }
 
-/// A low degree proof over a committed evaluation vector.
 pub struct FriProof {
-    /// The Merkle roots of the committed folding layers.
     pub layer_roots: Vec<Digest>,
-    /// The final folded layer, a constant vector sent in the clear.
     pub final_layer: Vec<Felt>,
-    /// The query openings that tie the layers together.
     pub queries: Vec<QueryProof>,
 }
 
@@ -154,7 +125,6 @@ fn commit_layer(values: &[Felt]) -> MerkleTree {
     MerkleTree::commit(&leaves)
 }
 
-/// Produces a low degree proof that the evaluation vector is close to a
 pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
     let n = params.domain_size();
     assert_eq!(
@@ -229,7 +199,6 @@ pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
     }
 }
 
-/// Checks a low degree proof against the FRI schedule.
 pub fn verify(params: &FriParams, proof: &FriProof) -> bool {
     let n = params.domain_size();
     if !params.blowup.is_power_of_two() {

@@ -1,19 +1,14 @@
-//! Challenge ball sampling of the sparse challenge polynomial.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::RING_DEGREE;
 
-/// The number of nonzero coefficients of the challenge for the parameter set.
 pub const TAU: usize = 49;
 
-/// The first target index of the shuffle, the ring degree minus tau.
 pub const START: usize = RING_DEGREE - TAU;
 
-/// The sign word byte length, read before the shuffle.
 pub const SIGN_BYTES: usize = 8;
 
-/// The bytes of the first SHAKE256 buffer the reference squeezes, two rate blocks.
 pub const BALL_BUFFER_BYTES: usize = crate::sponge::SHAKE256_RATE * 2;
 
 const COL_J: usize = 0;
@@ -26,13 +21,10 @@ const COL_GT: usize = 6;
 const COL_LE_BITS: usize = 7;
 const COL_GT_BITS: usize = COL_LE_BITS + 8;
 
-/// The column width of the challenge ball sampling piece.
 pub const WIDTH: usize = COL_GT_BITS + 8;
 
-/// The accept column relative to the piece base.
 pub const ACCEPT_COL: usize = COL_ACC;
 
-/// The consumed byte column relative to the piece base.
 pub const BYTE_COL: usize = COL_J;
 
 fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
@@ -46,7 +38,6 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     acc
 }
 
-/// The sign word, the little endian value of the first eight squeeze bytes.
 pub fn sign_word(stream: &[u8]) -> u64 {
     let mut signs = 0u64;
     for i in 0..SIGN_BYTES {
@@ -55,7 +46,6 @@ pub fn sign_word(stream: &[u8]) -> u64 {
     signs
 }
 
-/// Samples the sparse challenge polynomial from the squeeze, the reference
 pub fn sample_in_ball(stream: &[u8]) -> Vec<i64> {
     let signs = sign_word(stream);
     let mut c = vec![0i64; RING_DEGREE];
@@ -78,7 +68,6 @@ pub fn sample_in_ball(stream: &[u8]) -> Vec<i64> {
     c
 }
 
-/// The number of stream bytes the shuffle consumes to place all tau positions.
 fn consumed_bytes(stream: &[u8]) -> usize {
     let mut pos = SIGN_BYTES;
     let mut i = START;
@@ -92,7 +81,6 @@ fn consumed_bytes(stream: &[u8]) -> usize {
     pos - SIGN_BYTES
 }
 
-/// Adds the challenge ball sampling constraints at the given column base, so the
 pub fn add_constraints(air: &mut Air, base: usize) {
     let degree = Felt::new(RING_DEGREE as u64);
     let j = base + COL_J;
@@ -103,14 +91,10 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     let le = base + COL_LE;
     let gt = base + COL_GT;
 
-    // The accept, done, and their product gates. The accept bit and the done bit
-    // are bits, and no accept fires once the target has reached the ring degree.
     air.add_single_row(2, move |row| row[acc].mul(row[acc].sub(Felt::ONE)));
     air.add_single_row(2, move |row| row[done].mul(row[done].sub(Felt::ONE)));
     air.add_single_row(2, move |row| row[done].mul(row[acc]));
 
-    // The done bit is exactly the target at the ring degree. When the target is
-    // below it the inverse witness pins the difference away from zero.
     air.add_single_row(2, move |row| row[done].mul(row[i].sub(degree)));
     air.add_single_row(3, move |row| {
         Felt::ONE
@@ -118,15 +102,11 @@ pub fn add_constraints(air: &mut Air, base: usize) {
             .mul(row[i].sub(degree).mul(row[dinv]).sub(Felt::ONE))
     });
 
-    // On an accept the byte lands at or below the target, pinned by the non
-    // negative range witness target minus byte.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_LE_BITS, 8).sub(row[le])
     });
     air.add_single_row(2, move |row| row[acc].mul(row[le].sub(row[i].sub(row[j]))));
 
-    // On a genuine rejection, before the target is done, the byte lands above the
-    // target, pinned by the non negative range witness byte minus target minus one.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_GT_BITS, 8).sub(row[gt])
     });
@@ -137,12 +117,10 @@ pub fn add_constraints(air: &mut Air, base: usize) {
             .mul(row[gt].sub(row[j].sub(row[i]).sub(Felt::ONE)))
     });
 
-    // The target accumulates the accept bits from one row to the next.
     air.add_transition(1, move |current, next| {
         next[i].sub(current[i]).sub(current[acc])
     });
 
-    // Every range bit is zero or one.
     for start in [COL_LE_BITS, COL_GT_BITS] {
         for k in 0..8 {
             let col = base + start + k;
@@ -151,7 +129,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     }
 }
 
-/// Builds the challenge ball description of the given length, and pins the target
 pub fn ball_air(length: usize) -> Air {
     let mut air = Air::new(WIDTH, length);
     add_constraints(&mut air, 0);
@@ -166,17 +143,12 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
     }
 }
 
-/// A filled challenge ball batch with its description and the sampled polynomial.
 pub struct BallBatch {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The sampled challenge polynomial, tau nonzero signs among the ring degree.
     pub challenge: Vec<i64>,
 }
 
-/// Lays out a trace over the shuffle bytes of the stream. Each row consumes one
 pub fn ball_batch(stream: &[u8]) -> BallBatch {
     let consumed = consumed_bytes(stream);
     let length = (consumed + 1).next_power_of_two().max(2);
@@ -260,7 +232,6 @@ mod tests {
             }
         }
         assert_eq!(positions.len(), TAU);
-        // The reference places tau positions, each at or below its target.
         for (step, p) in positions.iter().enumerate() {
             assert!(*p <= START + step);
         }
@@ -276,8 +247,6 @@ mod tests {
     fn a_flipped_accept_bit_is_rejected() {
         let batch = ball_batch(&sample_stream());
         let mut trace = batch.trace;
-        // Claim a rejected byte was accepted. Its target no longer reaches the ring
-        // degree at the endpoint, and the range witness no longer matches.
         let mut target = 0;
         for row in 0..trace.length() {
             if trace.get(ACCEPT_COL, row) == Felt::ZERO && trace.get(COL_DONE, row) == Felt::ZERO {
@@ -293,7 +262,6 @@ mod tests {
     fn a_tampered_byte_is_rejected() {
         let batch = ball_batch(&sample_stream());
         let mut trace = batch.trace;
-        // Raise an accepted byte above its target while keeping the accept bit.
         let mut target = 0;
         for row in 0..trace.length() {
             if trace.get(ACCEPT_COL, row) == Felt::ONE {

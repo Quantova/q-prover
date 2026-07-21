@@ -1,10 +1,8 @@
-//! The constraint framework for the hash based proof.
 
 use std::sync::Arc;
 
 use crate::field::Felt;
 
-/// An execution trace laid out one column at a time.
 pub struct TraceTable {
     width: usize,
     length: usize,
@@ -12,7 +10,6 @@ pub struct TraceTable {
 }
 
 impl TraceTable {
-    /// Builds an all zero trace of the given shape. The length must be a power
     pub fn new(width: usize, length: usize) -> Self {
         assert!(width >= 1, "a trace needs at least one column");
         assert!(length.is_power_of_two(), "length must be a power of two");
@@ -23,71 +20,51 @@ impl TraceTable {
         }
     }
 
-    /// The number of columns.
     pub fn width(&self) -> usize {
         self.width
     }
 
-    /// The number of rows.
     pub fn length(&self) -> usize {
         self.length
     }
 
-    /// Writes a single cell.
     pub fn set(&mut self, column: usize, row: usize, value: Felt) {
         self.columns[column][row] = value;
     }
 
-    /// Reads a single cell.
     pub fn get(&self, column: usize, row: usize) -> Felt {
         self.columns[column][row]
     }
 
-    /// Borrows a whole column.
     pub fn column(&self, column: usize) -> &[Felt] {
         &self.columns[column]
     }
 
-    /// Copies a whole row across the columns.
     pub fn row(&self, row: usize) -> Vec<Felt> {
         self.columns.iter().map(|c| c[row]).collect()
     }
 }
 
-/// A constraint that reads the current row and the following row. The closure
 pub struct Transition {
-    /// The algebraic degree of the closure in the trace cells.
     pub degree: usize,
-    /// When true the constraint is not enforced on the last row, which is the
     pub exclude_last: bool,
-    /// When true the closure reads the transcript challenges and cannot be
     pub uses_challenges: bool,
-    /// The closure over the current row, the next row, and the challenges.
     pub rule: Box<dyn Fn(&[Felt], &[Felt], &[Felt]) -> Felt + Sync>,
 }
 
-/// A constraint that pins one cell to a fixed value.
 pub struct Boundary {
-    /// The column of the pinned cell.
     pub column: usize,
-    /// The row of the pinned cell.
     pub row: usize,
-    /// The value the cell must hold.
     pub value: Felt,
 }
 
-/// A per row multiplicative factor over the current row and the challenges.
 type Factor = Arc<dyn Fn(&[Felt], &[Felt]) -> Felt + Send + Sync>;
 
-/// A permutation argument backed by one auxiliary running product column.
 struct Permutation {
-    /// The per row numerator factor.
     num_factor: Factor,
-    /// The per row denominator factor.
     den_factor: Factor,
 }
 
-/// The algebraic description of a computation, made of a shape and its
 pub struct Air {
     base_width: usize,
     aux_width: usize,
@@ -99,7 +76,6 @@ pub struct Air {
 }
 
 impl Air {
-    /// Starts an empty description for a base trace of the given shape. Auxiliary
     pub fn new(width: usize, length: usize) -> Self {
         assert!(length.is_power_of_two(), "length must be a power of two");
         Air {
@@ -113,42 +89,34 @@ impl Air {
         }
     }
 
-    /// The full trace width, the base columns plus the auxiliary columns.
     pub fn width(&self) -> usize {
         self.base_width + self.aux_width
     }
 
-    /// The number of base columns the caller fills before the challenges.
     pub fn base_width(&self) -> usize {
         self.base_width
     }
 
-    /// The number of auxiliary columns the permutation arguments append.
     pub fn aux_width(&self) -> usize {
         self.aux_width
     }
 
-    /// The number of transcript challenges the description draws.
     pub fn num_challenges(&self) -> usize {
         self.num_challenges
     }
 
-    /// The trace length the description expects.
     pub fn length(&self) -> usize {
         self.length
     }
 
-    /// The transition constraints.
     pub fn transitions(&self) -> &[Transition] {
         &self.transitions
     }
 
-    /// The boundary constraints.
     pub fn boundaries(&self) -> &[Boundary] {
         &self.boundaries
     }
 
-    /// Adds a constraint that relates the current row to the next row. It is not
     pub fn add_transition<F>(&mut self, degree: usize, rule: F)
     where
         F: Fn(&[Felt], &[Felt]) -> Felt + Sync + 'static,
@@ -161,7 +129,6 @@ impl Air {
         });
     }
 
-    /// Adds a constraint that holds within every row on its own. The closure
     pub fn add_single_row<F>(&mut self, degree: usize, rule: F)
     where
         F: Fn(&[Felt]) -> Felt + Sync + 'static,
@@ -174,7 +141,6 @@ impl Air {
         });
     }
 
-    /// Adds a constraint that relates the current row to the next row and holds
     pub fn add_wrap_transition<F>(&mut self, degree: usize, rule: F)
     where
         F: Fn(&[Felt], &[Felt]) -> Felt + Sync + 'static,
@@ -187,19 +153,16 @@ impl Air {
         });
     }
 
-    /// Pins the cell at the column and row to the value.
     pub fn add_boundary(&mut self, column: usize, row: usize, value: Felt) {
         self.boundaries.push(Boundary { column, row, value });
     }
 
-    /// Reserves one transcript challenge and returns its index. Challenges are
     pub fn add_challenge(&mut self) -> usize {
         let index = self.num_challenges;
         self.num_challenges += 1;
         index
     }
 
-    /// Adds a permutation argument. The numerator and denominator factors read
     pub fn add_permutation<N, D>(&mut self, degree: usize, num_factor: N, den_factor: D) -> usize
     where
         N: Fn(&[Felt], &[Felt]) -> Felt + Send + Sync + 'static,
@@ -230,7 +193,6 @@ impl Air {
         aux_col
     }
 
-    /// Builds the auxiliary running product columns from a base trace and the
     pub fn build_aux(&self, base: &TraceTable, challenges: &[Felt]) -> Vec<Vec<Felt>> {
         let n = self.length;
         let mut columns = Vec::with_capacity(self.permutations.len());
@@ -254,7 +216,6 @@ impl Air {
         columns
     }
 
-    /// Assembles the full trace by appending the auxiliary columns to the base
     pub fn assemble(&self, base: &TraceTable, challenges: &[Felt]) -> TraceTable {
         let aux = self.build_aux(base, challenges);
         let mut full = TraceTable::new(self.width().max(1), self.length);
@@ -271,7 +232,6 @@ impl Air {
         full
     }
 
-    /// The largest algebraic degree among the transition constraints, never
     pub fn max_degree(&self) -> usize {
         self.transitions
             .iter()
@@ -281,7 +241,6 @@ impl Air {
             .max(1)
     }
 
-    /// Checks the trace against every constraint directly, without a proof. This
     pub fn is_satisfied(&self, trace: &TraceTable) -> bool {
         let n = self.length;
         for row in 0..n {
@@ -310,7 +269,6 @@ impl Air {
         true
     }
 
-    /// Checks a base trace against every constraint under the given challenges.
     pub fn is_satisfied_with(&self, base: &TraceTable, challenges: &[Felt]) -> bool {
         assert_eq!(base.width(), self.base_width, "base trace width mismatch");
         assert_eq!(
@@ -420,8 +378,6 @@ mod tests {
         assert!(!air.is_satisfied(&trace));
     }
 
-    // A description with one permutation argument over two columns, proving the
-    // second column is a reordering of the first.
     fn permutation_air() -> Air {
         let mut air = Air::new(2, 8);
         let gamma = air.add_challenge();
@@ -453,8 +409,6 @@ mod tests {
     fn a_mismatched_multiset_is_rejected() {
         let air = permutation_air();
         let source = [3u64, 1, 4, 1, 5, 9, 2, 6];
-        // The second column drops the nine for another six, so the multisets
-        // differ and the running product cannot close.
         let shuffled = [6u64, 5, 4, 3, 2, 1, 1, 6];
         let mut base = TraceTable::new(2, 8);
         for row in 0..8 {

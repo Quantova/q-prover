@@ -1,21 +1,14 @@
-//! Worked computations for the proof protocol.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 
-/// A squaring chain together with its description and public values.
 pub struct SquaringChain {
-    /// The algebraic description of the chain.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The pinned first value.
     pub seed: Felt,
-    /// The pinned last value.
     pub output: Felt,
 }
 
-/// Builds a squaring chain whose length is two to the log length. The running
 pub fn squaring_chain(log_length: u32, seed: Felt) -> SquaringChain {
     let length = 1usize << log_length;
     let mut trace = TraceTable::new(1, length);

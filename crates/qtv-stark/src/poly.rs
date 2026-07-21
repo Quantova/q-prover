@@ -1,8 +1,6 @@
-//! Polynomial transforms over the Goldilocks subgroups.
 
 use crate::field::{root_of_unity, Felt};
 
-/// In place radix two transform. On return values[i] holds the evaluation of the
 pub fn ntt(values: &mut [Felt], omega: Felt) {
     let n = values.len();
     assert!(n.is_power_of_two(), "length must be a power of two");
@@ -39,7 +37,6 @@ pub fn ntt(values: &mut [Felt], omega: Felt) {
     }
 }
 
-/// Interpolates evaluations sampled over the subgroup of their own length and
 pub fn interpolate(evaluations: &[Felt]) -> Vec<Felt> {
     let n = evaluations.len();
     assert!(n.is_power_of_two(), "length must be a power of two");
@@ -54,7 +51,6 @@ pub fn interpolate(evaluations: &[Felt]) -> Vec<Felt> {
     coeffs
 }
 
-/// Evaluates a coefficient vector over the subgroup of a chosen larger order.
 pub fn evaluate_subgroup(coeffs: &[Felt], log_size: u32) -> Vec<Felt> {
     let size = 1usize << log_size;
     assert!(
@@ -67,7 +63,6 @@ pub fn evaluate_subgroup(coeffs: &[Felt], log_size: u32) -> Vec<Felt> {
     padded
 }
 
-/// Evaluates a coefficient vector over a coset of the subgroup, namely the shift
 pub fn evaluate_coset(coeffs: &[Felt], log_size: u32, shift: Felt) -> Vec<Felt> {
     let size = 1usize << log_size;
     assert!(
@@ -85,7 +80,6 @@ pub fn evaluate_coset(coeffs: &[Felt], log_size: u32, shift: Felt) -> Vec<Felt> 
     padded
 }
 
-/// Evaluates a coefficient vector at a single point by Horner folding.
 pub fn eval_at(coeffs: &[Felt], point: Felt) -> Felt {
     let mut acc = Felt::ZERO;
     for c in coeffs.iter().rev() {
@@ -94,7 +88,6 @@ pub fn eval_at(coeffs: &[Felt], point: Felt) -> Felt {
     acc
 }
 
-/// Inverts a whole vector with one field inversion by the running product
 pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
     let n = values.len();
     let mut prefix = vec![Felt::ONE; n];

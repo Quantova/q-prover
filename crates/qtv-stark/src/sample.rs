@@ -1,16 +1,12 @@
-//! Rejection sampling of the matrix coefficients below the modulus.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::{Q, RESIDUE_BITS, RING_DEGREE};
 
-/// The bytes consumed per candidate, the low, middle, and high byte of the
 pub const CANDIDATE_BYTES: usize = 3;
 
-/// The bytes of the first SHAKE128 buffer the reference squeezes, six rate blocks.
 pub const REJ_BUFFER_BYTES: usize = crate::sponge::SHAKE128_RATE * 6;
 
-/// The candidates the first buffer covers. It exceeds the ring degree with wide
 pub const CANDIDATES: usize = REJ_BUFFER_BYTES / CANDIDATE_BYTES;
 
 const COL_B0: usize = 0;
@@ -28,7 +24,6 @@ const COL_B2M_BITS: usize = COL_B1_BITS + 8;
 const COL_SUB_BITS: usize = COL_B2M_BITS + 7;
 const COL_OVER_BITS: usize = COL_SUB_BITS + RESIDUE_BITS;
 
-/// The column width of the rejection sampling piece.
 pub const WIDTH: usize = COL_OVER_BITS + RESIDUE_BITS;
 
 fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
@@ -42,12 +37,10 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
     acc
 }
 
-/// The candidate integer of one byte triple, the twenty three bit value the
 pub fn candidate(b0: u8, b1: u8, b2: u8) -> u32 {
     (b0 as u32) | ((b1 as u32) << 8) | (((b2 & 127) as u32) << 16)
 }
 
-/// Rejection samples one ring of coefficients below the modulus from the stream,
 pub fn rej_sample(stream: &[u8]) -> Vec<u64> {
     let mut out = Vec::with_capacity(RING_DEGREE);
     let mut pos = 0usize;
@@ -61,7 +54,6 @@ pub fn rej_sample(stream: &[u8]) -> Vec<u64> {
     out
 }
 
-/// Adds the rejection sampling constraints at the given column base, so the piece
 pub fn add_constraints(air: &mut Air, base: usize) {
     let modulus = Felt::new(Q);
     let modulus_minus_one = Felt::new(Q - 1);
@@ -78,7 +70,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     let sub = base + COL_SUB;
     let over = base + COL_OVER;
 
-    // The three bytes recompose from their bits, which forces them into range.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_B0_BITS, 8).sub(row[b0])
     });
@@ -89,12 +80,9 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_B2M_BITS, 7).sub(row[b2m])
     });
 
-    // The high byte splits into its low seven bits and its dropped top bit.
     air.add_single_row(2, move |row| row[bit7].mul(row[bit7].sub(Felt::ONE)));
     air.add_single_row(1, move |row| row[b2].sub(row[b2m]).sub(row[bit7].mul(top)));
 
-    // The candidate is the little endian value of the low byte, the middle byte,
-    // and the masked high byte.
     air.add_single_row(1, move |row| {
         row[z]
             .sub(row[b0])
@@ -102,12 +90,8 @@ pub fn add_constraints(air: &mut Air, base: usize) {
             .sub(row[b2m].mul(word_hi))
     });
 
-    // The accept bit is a bit.
     air.add_single_row(2, move |row| row[acc].mul(row[acc].sub(Felt::ONE)));
 
-    // When the candidate is accepted the range witness recomposes to q minus one
-    // minus the candidate, a non negative twenty three bit value, so the candidate
-    // is below q. A candidate at or above q cannot present that witness.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_SUB_BITS, RESIDUE_BITS).sub(row[sub])
     });
@@ -115,9 +99,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         row[acc].mul(row[sub].sub(modulus_minus_one.sub(row[z])))
     });
 
-    // When the candidate is rejected the range witness recomposes to the candidate
-    // minus q, a non negative twenty three bit value, so the candidate is at or
-    // above q. A candidate below q cannot present that witness.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_OVER_BITS, RESIDUE_BITS).sub(row[over])
     });
@@ -127,7 +108,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
             .mul(row[over].sub(row[z].sub(modulus)))
     });
 
-    // Every range bit is zero or one.
     for start in [COL_B0_BITS, COL_B1_BITS] {
         for k in 0..8 {
             let col = base + start + k;
@@ -146,7 +126,6 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     }
 }
 
-/// Builds the rejection sampling description of the given length. The length must
 pub fn rej_air(length: usize) -> Air {
     let mut air = Air::new(WIDTH, length);
     add_constraints(&mut air, 0);
@@ -159,7 +138,6 @@ fn set_bits(trace: &mut TraceTable, col: usize, row: usize, value: u64, bits: us
     }
 }
 
-/// Fills one rejection sampling row at the given column base over one byte triple.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, b0: u8, b1: u8, b2: u8) {
     let b2m = (b2 & 127) as u64;
     let bit7 = (b2 >> 7) as u64;
@@ -184,23 +162,16 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, b0: u8, b1: u8,
     set_bits(trace, base + COL_OVER_BITS, row, over, RESIDUE_BITS);
 }
 
-/// A filled rejection sampling batch with its description.
 pub struct RejBatch {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The accepted coefficients in order, the ring the expansion produces.
     pub coefficients: Vec<u64>,
 }
 
-/// The accept column relative to the piece base, so a joined trace can bind the
 pub const ACCEPT_COL: usize = COL_ACC;
 
-/// The candidate column relative to the piece base.
 pub const CANDIDATE_COL: usize = COL_Z;
 
-/// Lays out a trace over the leading candidates of the stream. Each row processes
 pub fn rej_batch(stream: &[u8]) -> RejBatch {
     let candidates = (stream.len() / CANDIDATE_BYTES).min(CANDIDATES);
     let length = candidates.next_power_of_two().max(2);
@@ -279,8 +250,6 @@ mod tests {
     fn a_flipped_accept_bit_is_rejected() {
         let batch = rej_batch(&sample_stream());
         let mut trace = batch.trace;
-        // Find an accepted row and claim it was rejected. Its range witness no
-        // longer matches either branch.
         let mut target = 0;
         for row in 0..trace.length() {
             if trace.get(ACCEPT_COL, row) == Felt::ONE {

@@ -1,29 +1,22 @@
-//! Infinity norm range check for the signature response.
 
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::Q;
 
-/// The response range parameter gamma1 for the ML DSA 65 parameter set, two to
 pub const GAMMA1: u64 = 1 << 19;
 
-/// The rejection margin beta for the ML DSA 65 parameter set, the challenge
 pub const BETA: u64 = 196;
 
-/// The exclusive infinity norm bound the response must respect.
 pub const NORM_BOUND: u64 = GAMMA1 - BETA;
 
-/// The bit width that covers the bound.
 pub const NORM_BITS: usize = 20;
 
-/// The input response coefficient column, relative to the piece base.
 pub const COL_Z: usize = 0;
 const COL_SIGN: usize = 1;
 const COL_MAG: usize = 2;
 const COL_MAG_BITS: usize = 3;
 const COL_MAG_SLACK: usize = COL_MAG_BITS + NORM_BITS;
 
-/// The column width of the norm check piece.
 pub const WIDTH: usize = COL_MAG_SLACK + NORM_BITS;
 
 fn recompose(row: &[Felt], base: usize) -> Felt {
@@ -37,7 +30,6 @@ fn recompose(row: &[Felt], base: usize) -> Felt {
     acc
 }
 
-/// Adds the infinity norm constraints at the given column base, so the piece can
 pub fn add_constraints(air: &mut Air, base: usize) {
     let modulus = Felt::new(Q);
     let bound_minus_one = Felt::new(NORM_BOUND - 1);
@@ -45,19 +37,13 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     let sign = base + COL_SIGN;
     let mag = base + COL_MAG;
 
-    // The centered magnitude is the coefficient when the sign bit is zero and
-    // the modulus minus the coefficient when the sign bit is one.
     air.add_single_row(2, move |row| {
         let mirror = modulus.sub(row[z].add(row[z]));
         row[mag].sub(row[z]).sub(row[sign].mul(mirror))
     });
 
-    // The sign is a bit.
     air.add_single_row(2, move |row| row[sign].mul(row[sign].sub(Felt::ONE)));
 
-    // The magnitude bit expansion recomposes to the magnitude, and the slack
-    // expansion recomposes to the bound minus one minus the magnitude, which
-    // together force the magnitude below the bound.
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_MAG_BITS).sub(row[mag])
     });
@@ -73,21 +59,17 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     }
 }
 
-/// Builds the description for a batch of infinity norm checks of the given
 pub fn norm_air(length: usize) -> Air {
     let mut air = Air::new(WIDTH, length);
     add_constraints(&mut air, 0);
     air
 }
 
-/// Fills one infinity norm check row at the given column base.
 pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, z: u64) {
     let (sign, magnitude) = if z <= Q / 2 { (0u64, z) } else { (1u64, Q - z) };
     trace.set(base + COL_Z, row, Felt::new(z));
     trace.set(base + COL_SIGN, row, Felt::new(sign));
     trace.set(base + COL_MAG, row, Felt::new(magnitude));
-    // A coefficient outside the bound has no honest witness. The wrapping keeps
-    // the fill total so the range constraints reject it rather than panicking.
     let slack = (NORM_BOUND - 1).wrapping_sub(magnitude);
     for k in 0..NORM_BITS {
         trace.set(
@@ -99,17 +81,12 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, z: u64) {
     }
 }
 
-/// A filled norm batch with its description.
 pub struct NormBatch {
-    /// The description shared with the verifier.
     pub air: Air,
-    /// The filled trace.
     pub trace: TraceTable,
-    /// The number of real coefficients before padding.
     pub count: usize,
 }
 
-/// Lays out a trace that checks the infinity norm of a batch of coefficients.
 pub fn norm_batch(coefficients: &[u64]) -> NormBatch {
     let count = coefficients.len();
     let length = count.next_power_of_two().max(2);
@@ -156,7 +133,6 @@ mod tests {
 
     #[test]
     fn a_middle_band_coefficient_is_rejected() {
-        // A coefficient at the modulus over two is as far from zero as possible.
         let batch = norm_batch(&[Q / 2]);
         assert!(!batch.air.is_satisfied(&batch.trace));
     }
