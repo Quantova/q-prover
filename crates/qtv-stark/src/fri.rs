@@ -1,3 +1,6 @@
+// Copyright 2026 Quantova Inc
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 
 use crate::field::{root_of_unity, Felt, MODULUS};
 use crate::merkle::{hash_leaf, Digest, MerkleProof, MerkleTree};

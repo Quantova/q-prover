@@ -1,3 +1,6 @@
+// Copyright 2026 Quantova Inc
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! Benchmark for the fused certificate over the hashing and the per coefficient
 
 use std::time::Instant;

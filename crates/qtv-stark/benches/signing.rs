@@ -1,3 +1,6 @@
+// Copyright 2026 Quantova Inc
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 //! Benchmark for the FIPS 204 signing derivation with a zero randomizer.
 
 use std::time::Instant;
