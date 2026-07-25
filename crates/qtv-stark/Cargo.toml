@@ -6,7 +6,7 @@ license = "Apache-2.0 OR MIT"
 description = "Hash based STARK backend for Quantova."
 
 [dependencies]
-qtv-crypto = { git = "https://github.com/Quantova/Q-Crypto.git", tag = "v0.3.0" }
+qtv-crypto = { git = "https://github.com/Quantova/Q-Crypto.git", rev = "4c0bdcb7dce9d2de6f9f510b0695377321076fef" }
 
 [[bench]]
 name = "backend"
