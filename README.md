@@ -33,12 +33,9 @@ The fused certificate joins the hashing and the signature arithmetic into one pr
 
 A second arithmetization proves not that a signature verifies but that it is the canonical one, the output of ML-DSA-65 signing with the per signature randomizer fixed at zero. That is what gives the sortition draw its grinding resistance, since a hedged signature would verify just as well but is not canonical.
 
-## Measured behavior
+## Performance shape
 
-Benchmark results are committed next to the benches and reproduce with `cargo bench`. The numbers below are from an Apple Silicon host on the release profile.
-
-- FRI low degree proof, over a domain of 65536 field elements with a blow up of 8 and 32 queries. About 120 milliseconds to prove and about 3 milliseconds to verify, with a serialized proof near 267 kilobytes. Verification is about forty times faster than proving, the asymmetry the consensus design needs.
-- Fused certificate, at a batch of 16 hash derived coefficients over a 512 row trace. About 29 seconds to prove and about 73 milliseconds to verify.
+Verification is designed to be far cheaper than proving, the asymmetry the consensus and light client paths depend on. A benchmark harness lives beside the code and reproduces with `cargo bench` for anyone building locally.
 
 ## Maturity
 
