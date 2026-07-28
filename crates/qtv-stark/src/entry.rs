@@ -7,7 +7,7 @@ use qtv_crypto::sha3::shake256;
 use crate::certificate::{certificate_air, certificate_trace};
 use crate::codec::{decode_proof, encode_proof};
 use crate::norm::NORM_BOUND;
-use crate::sponge::{shake_output, SHAKE256_RATE};
+use crate::sponge::{shake_output, SEGMENT_ROWS, SHAKE256_RATE};
 use crate::stark::{prove, verify, StarkParams};
 
 pub const CERT_BLOWUP: usize = 32;
@@ -76,6 +76,10 @@ pub fn prove_batch(message: &[u8], segments: usize, responses: &[u64]) -> BatchP
 pub fn verify_batch(message: &[u8], cert: &BatchProof) -> bool {
     if message.len() > MAX_MESSAGE_BYTES || cert.segments == 0 {
         return false;
+    }
+    match cert.segments.checked_mul(SEGMENT_ROWS) {
+        Some(rows) if rows.is_power_of_two() => {}
+        _ => return false,
     }
     let proof = match decode_proof(&cert.proof) {
         Some(proof) => proof,
@@ -158,5 +162,25 @@ mod tests {
     #[test]
     fn a_short_body_decodes_to_none() {
         assert!(BatchProof::from_bytes(&[0u8; 4]).is_none());
+    }
+
+    #[test]
+    fn a_non_power_of_two_segment_count_is_rejected_without_panicking() {
+        let message = b"crafted certificate with bad segments";
+        let cert = BatchProof {
+            segments: 3,
+            proof: vec![0u8; 8],
+        };
+        assert!(!verify_batch(message, &cert));
+    }
+
+    #[test]
+    fn an_overflowing_segment_count_is_rejected_without_panicking() {
+        let message = b"crafted certificate with huge segments";
+        let cert = BatchProof {
+            segments: usize::MAX,
+            proof: vec![0u8; 8],
+        };
+        assert!(!verify_batch(message, &cert));
     }
 }
