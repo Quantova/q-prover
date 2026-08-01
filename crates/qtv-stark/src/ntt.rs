@@ -207,6 +207,11 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
     let modulus_minus_one = Felt::new(Q - 1);
     let last = layers as usize - 1;
 
+    let omega = root_of_unity_q(n);
+    for bf in &schedule(n, layers, omega) {
+        air.add_boundary(W, bf.row, Felt::new(bf.twiddle));
+    }
+
     air.add_single_row(2, move |row| {
         row[W].mul(row[B]).sub(row[MQ].mul(modulus)).sub(row[M])
     });
@@ -410,6 +415,79 @@ mod tests {
         trace.set(SEL0, 0, Felt::ONE);
         let air = ntt_air(2, &input, &output);
         assert!(!air.is_satisfied(&trace));
+    }
+
+    #[test]
+    fn the_twiddle_column_is_pinned_on_every_row() {
+        let n = 16usize;
+        let layers = (n as u32).trailing_zeros();
+        let omega = root_of_unity_q(n);
+        let plan = schedule(n, layers, omega);
+        let air = ntt_air(n, &to_layer_zero(&sample_coeffs(n)), &vec![0u64; n]);
+        for bf in &plan {
+            assert!(air
+                .boundaries()
+                .iter()
+                .any(|b| b.column == W && b.row == bf.row && b.value == Felt::new(bf.twiddle)));
+        }
+    }
+
+    #[test]
+    fn a_forged_twiddle_producing_a_false_output_is_rejected() {
+        let coeffs = sample_coeffs(16);
+        let instance = ntt_trace(&to_layer_zero(&coeffs));
+        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
+        let n = 16usize;
+        let layers = (n as u32).trailing_zeros();
+        let last = layers as usize - 1;
+        let victim_row = last;
+        let input = instance.input.clone();
+        let honest_output = instance.output.clone();
+        let a_val = instance.trace.get(A, victim_row).to_u64();
+        let b_val = instance.trace.get(B, victim_row).to_u64();
+        let honest_w = instance.trace.get(W, victim_row).to_u64();
+        let forged_w = 3u64;
+        assert_ne!(forged_w, honest_w);
+        let product = forged_w as u128 * b_val as u128;
+        let mq = (product / Q as u128) as u64;
+        let m = (product % Q as u128) as u64;
+        let (s, cs) = {
+            let sum = a_val + m;
+            if sum >= Q {
+                (sum - Q, 1u64)
+            } else {
+                (sum, 0)
+            }
+        };
+        let (d, cd) = if a_val >= m {
+            (a_val - m, 0u64)
+        } else {
+            (a_val + Q - m, 1)
+        };
+        let half = n / 2;
+        let mut forged_output = honest_output.clone();
+        forged_output[0] = s;
+        forged_output[half] = d;
+        assert_ne!(forged_output, honest_output);
+        let mut trace = instance.trace;
+        trace.set(W, victim_row, Felt::new(forged_w));
+        trace.set(M, victim_row, Felt::new(m));
+        trace.set(MQ, victim_row, Felt::new(mq));
+        trace.set(S, victim_row, Felt::new(s));
+        trace.set(D, victim_row, Felt::new(d));
+        trace.set(CS, victim_row, Felt::new(cs));
+        trace.set(CD, victim_row, Felt::new(cd));
+        set_bits(&mut trace, M_BITS, victim_row, m);
+        set_bits(&mut trace, M_SLACK, victim_row, Q - 1 - m);
+        set_bits(&mut trace, S_BITS, victim_row, s);
+        set_bits(&mut trace, S_SLACK, victim_row, Q - 1 - s);
+        set_bits(&mut trace, D_BITS, victim_row, d);
+        set_bits(&mut trace, D_SLACK, victim_row, Q - 1 - d);
+        set_bits(&mut trace, MQ_BITS, victim_row, mq);
+        let air = ntt_air(n, &input, &forged_output);
+        assert!(!air.is_satisfied_with(&trace, &challenges));
+        let proof = prove(&air, &trace, &params());
+        assert!(!verify(&air, &params(), &proof));
     }
 
     #[test]
