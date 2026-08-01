@@ -37,8 +37,9 @@ pub const COL_R: usize = 2;
 const COL_QUO: usize = 3;
 const COL_R_BITS: usize = 4;
 const COL_S_BITS: usize = COL_R_BITS + RESIDUE_BITS;
+const COL_QUO_BITS: usize = COL_S_BITS + RESIDUE_BITS;
 
-pub const WIDTH: usize = COL_S_BITS + RESIDUE_BITS;
+pub const WIDTH: usize = COL_QUO_BITS + RESIDUE_BITS;
 
 fn recompose(row: &[Felt], base: usize) -> Felt {
     let two = Felt::new(2);
@@ -69,12 +70,18 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_S_BITS).sub(modulus_minus_one.sub(row[r]))
     });
 
+    air.add_single_row(1, move |row| recompose(row, base + COL_QUO_BITS).sub(row[quo]));
+
     for k in 0..RESIDUE_BITS {
         let col = base + COL_R_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
     }
     for k in 0..RESIDUE_BITS {
         let col = base + COL_S_BITS + k;
+        air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+    }
+    for k in 0..RESIDUE_BITS {
+        let col = base + COL_QUO_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
     }
 }
@@ -98,6 +105,7 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, a: u64, b: u64)
     for k in 0..RESIDUE_BITS {
         trace.set(base + COL_R_BITS + k, row, Felt::new((residue >> k) & 1));
         trace.set(base + COL_S_BITS + k, row, Felt::new((slack >> k) & 1));
+        trace.set(base + COL_QUO_BITS + k, row, Felt::new((quotient >> k) & 1));
     }
 }
 
@@ -183,6 +191,38 @@ mod tests {
         };
         let proof = prove(&batch.air, &trace, &params);
         assert!(!verify(&modmul_air(trace.length()), &params, &proof));
+    }
+
+    #[test]
+    fn a_forged_residue_with_a_compensating_quotient_is_rejected() {
+        let a = 3u64;
+        let b = 5u64;
+        let honest = (a * b) % Q;
+        let forged = honest + 1;
+        assert!(forged < Q);
+        let quotient = Felt::new(a)
+            .mul(Felt::new(b))
+            .sub(Felt::new(forged))
+            .mul(Felt::new(Q).inv());
+        let length = 2;
+        let mut trace = TraceTable::new(WIDTH, length);
+        fill_row(&mut trace, 0, 1, 0, 0);
+        trace.set(COL_A, 0, Felt::new(a));
+        trace.set(COL_B, 0, Felt::new(b));
+        trace.set(COL_R, 0, Felt::new(forged));
+        trace.set(COL_QUO, 0, quotient);
+        for k in 0..RESIDUE_BITS {
+            trace.set(COL_R_BITS + k, 0, Felt::new((forged >> k) & 1));
+            trace.set(COL_S_BITS + k, 0, Felt::new(((Q - 1 - forged) >> k) & 1));
+        }
+        let air = modmul_air(length);
+        assert!(!air.is_satisfied(&trace));
+        let params = StarkParams {
+            lde_blowup: 8,
+            num_queries: 24,
+        };
+        let proof = prove(&air, &trace, &params);
+        assert!(!verify(&modmul_air(length), &params, &proof));
     }
 
     #[test]
