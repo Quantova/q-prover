@@ -25,7 +25,8 @@ const S_BITS: usize = M_SLACK + RESIDUE_BITS;
 const S_SLACK: usize = S_BITS + RESIDUE_BITS;
 const D_BITS: usize = S_SLACK + RESIDUE_BITS;
 const D_SLACK: usize = D_BITS + RESIDUE_BITS;
-const SEL0: usize = D_SLACK + RESIDUE_BITS;
+const MQ_BITS: usize = D_SLACK + RESIDUE_BITS;
+const SEL0: usize = MQ_BITS + RESIDUE_BITS;
 
 fn width(layers: u32) -> usize {
     SEL0 + layers as usize
@@ -177,6 +178,7 @@ pub fn ntt_trace(input: &[u64]) -> NttInstance {
         set_bits(&mut trace, S_SLACK, bf.row, Q - 1 - s);
         set_bits(&mut trace, D_BITS, bf.row, d);
         set_bits(&mut trace, D_SLACK, bf.row, Q - 1 - d);
+        set_bits(&mut trace, MQ_BITS, bf.row, mq);
 
         state[bf.i0] = s;
         state[bf.i1] = d;
@@ -212,6 +214,7 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
     air.add_single_row(1, move |row| {
         recompose(row, M_SLACK).sub(modulus_minus_one.sub(row[M]))
     });
+    air.add_single_row(1, |row| recompose(row, MQ_BITS).sub(row[MQ]));
 
     air.add_single_row(1, move |row| {
         row[A].add(row[M]).sub(row[CS].mul(modulus)).sub(row[S])
@@ -231,7 +234,7 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         recompose(row, D_SLACK).sub(modulus_minus_one.sub(row[D]))
     });
 
-    for base in [M_BITS, M_SLACK, S_BITS, S_SLACK, D_BITS, D_SLACK] {
+    for base in [M_BITS, M_SLACK, S_BITS, S_SLACK, D_BITS, D_SLACK, MQ_BITS] {
         for k in 0..RESIDUE_BITS {
             let col = base + k;
             air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
@@ -360,6 +363,53 @@ mod tests {
         instance.trace.set(S, 1, d);
         instance.trace.set(D, 1, s);
         assert!(!instance.air.is_satisfied_with(&instance.trace, &challenges));
+    }
+
+    #[test]
+    fn a_forged_butterfly_product_is_rejected() {
+        let a = 1234u64;
+        let b = 5678u64;
+        let input = vec![a, b];
+        let forged_m = b + 1;
+        assert!(forged_m < Q);
+        let mq = Felt::new(b)
+            .sub(Felt::new(forged_m))
+            .mul(Felt::new(Q).inv());
+        let (s, cs) = if a + forged_m >= Q {
+            (a + forged_m - Q, 1u64)
+        } else {
+            (a + forged_m, 0)
+        };
+        let (d, cd) = if a >= forged_m {
+            (a - forged_m, 0u64)
+        } else {
+            (a + Q - forged_m, 1)
+        };
+        let output = vec![s, d];
+        assert_ne!(forged_m, (Felt::ONE.mul(Felt::new(b))).to_u64());
+        let mut trace = TraceTable::new(width(1), 1);
+        trace.set(A, 0, Felt::new(a));
+        trace.set(B, 0, Felt::new(b));
+        trace.set(W, 0, Felt::ONE);
+        trace.set(M, 0, Felt::new(forged_m));
+        trace.set(S, 0, Felt::new(s));
+        trace.set(D, 0, Felt::new(d));
+        trace.set(MQ, 0, mq);
+        trace.set(CS, 0, Felt::new(cs));
+        trace.set(CD, 0, Felt::new(cd));
+        trace.set(A_ID, 0, Felt::new(identity(0, 0, 2)));
+        trace.set(B_ID, 0, Felt::new(identity(0, 1, 2)));
+        trace.set(S_ID, 0, Felt::new(identity(1, 0, 2)));
+        trace.set(D_ID, 0, Felt::new(identity(1, 1, 2)));
+        set_bits(&mut trace, M_BITS, 0, forged_m);
+        set_bits(&mut trace, M_SLACK, 0, Q - 1 - forged_m);
+        set_bits(&mut trace, S_BITS, 0, s);
+        set_bits(&mut trace, S_SLACK, 0, Q - 1 - s);
+        set_bits(&mut trace, D_BITS, 0, d);
+        set_bits(&mut trace, D_SLACK, 0, Q - 1 - d);
+        trace.set(SEL0, 0, Felt::ONE);
+        let air = ntt_air(2, &input, &output);
+        assert!(!air.is_satisfied(&trace));
     }
 
     #[test]
