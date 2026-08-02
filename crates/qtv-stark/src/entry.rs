@@ -10,9 +10,9 @@ use crate::norm::NORM_BOUND;
 use crate::sponge::{shake_output, SEGMENT_ROWS, SHAKE256_RATE};
 use crate::stark::{prove, verify, StarkParams};
 
-pub const CERT_BLOWUP: usize = 32;
+pub const CERT_BLOWUP: usize = 128;
 
-pub const CERT_QUERIES: usize = 32;
+pub const CERT_QUERIES: usize = 43;
 
 pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 
