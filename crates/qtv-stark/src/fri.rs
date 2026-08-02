@@ -107,6 +107,8 @@ pub fn fold_layer<F: FriField>(evaluations: &[F], challenge: F, generator_inv: F
     folded
 }
 
+pub const PROTOCOL_TAG: &[u8] = b"QTV-STARK/v1";
+
 pub struct Transcript {
     state: Digest,
 }
@@ -114,6 +116,14 @@ pub struct Transcript {
 impl Transcript {
     pub fn new() -> Self {
         Transcript { state: [0u8; 32] }
+    }
+
+    pub fn with_domain(context: &[u8]) -> Self {
+        let mut transcript = Transcript::new();
+        transcript.absorb(PROTOCOL_TAG);
+        transcript.absorb(&(context.len() as u64).to_le_bytes());
+        transcript.absorb(context);
+        transcript
     }
 
     pub fn absorb(&mut self, bytes: &[u8]) {
@@ -206,6 +216,14 @@ fn commit_layer<F: FriField>(values: &[F]) -> MerkleTree {
 }
 
 pub fn prove<F: FriField>(evaluations: &[F], params: &FriParams) -> FriProof<F> {
+    prove_with_domain(evaluations, params, &[])
+}
+
+pub fn prove_with_domain<F: FriField>(
+    evaluations: &[F],
+    params: &FriParams,
+    context: &[u8],
+) -> FriProof<F> {
     let n = params.domain_size();
     assert_eq!(
         evaluations.len(),
@@ -219,7 +237,7 @@ pub fn prove<F: FriField>(evaluations: &[F], params: &FriParams) -> FriProof<F> 
     let rounds = params.rounds();
     assert!(rounds >= 1, "the schedule needs at least one fold");
 
-    let mut transcript = Transcript::new();
+    let mut transcript = Transcript::with_domain(context);
     let mut layers: Vec<Vec<F>> = vec![evaluations.to_vec()];
     let mut trees: Vec<MerkleTree> = Vec::with_capacity(rounds);
     let mut layer_roots: Vec<Digest> = Vec::with_capacity(rounds);
@@ -280,6 +298,14 @@ pub fn prove<F: FriField>(evaluations: &[F], params: &FriParams) -> FriProof<F> 
 }
 
 pub fn verify<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
+    verify_with_domain(params, proof, &[])
+}
+
+pub fn verify_with_domain<F: FriField>(
+    params: &FriParams,
+    proof: &FriProof<F>,
+    context: &[u8],
+) -> bool {
     let n = params.domain_size();
     if !params.blowup.is_power_of_two() {
         return false;
@@ -298,7 +324,7 @@ pub fn verify<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
         return false;
     }
 
-    let mut transcript = Transcript::new();
+    let mut transcript = Transcript::with_domain(context);
     transcript.absorb_digest(&proof.layer_roots[0]);
     let mut challenges = Vec::with_capacity(rounds);
     for round in 0..rounds {
@@ -605,6 +631,24 @@ mod tests {
         let mut proof = prove(&evals, &params);
         proof.queries[0].layers[0].eval = proof.queries[0].layers[0].eval.add(Fp3::ONE);
         assert!(!verify(&params, &proof));
+    }
+
+    #[test]
+    fn a_context_seeded_transcript_diverges_from_the_bare_protocol_seed() {
+        let bare = Transcript::with_domain(&[]).challenge_felt();
+        let context = Transcript::with_domain(b"chain-7/corridor-2").challenge_felt();
+        assert_ne!(bare, context);
+    }
+
+    #[test]
+    fn a_low_degree_proof_under_one_context_is_rejected_under_another() {
+        let params = sample_params();
+        let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
+        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let proof = prove_with_domain(&evals, &params, b"chain-a/corridor-x");
+        assert!(verify_with_domain(&params, &proof, b"chain-a/corridor-x"));
+        assert!(!verify_with_domain(&params, &proof, b"chain-b/corridor-x"));
+        assert!(!verify_with_domain(&params, &proof, b"chain-a/corridor-y"));
     }
 
     #[test]
