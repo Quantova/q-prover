@@ -4,6 +4,7 @@
 
 use crate::air::{Air, TraceTable};
 use crate::field::{root_of_unity, Felt, GENERATOR};
+use crate::field_ext::Fp3;
 use crate::fri::{self, FriParams, FriProof, Transcript};
 use crate::merkle::{hash_row, Digest, MerkleProof, MerkleTree};
 use crate::poly;
@@ -27,7 +28,7 @@ pub struct QueryOpening {
 pub struct StarkProof {
     pub trace_root: Digest,
     pub aux_root: Digest,
-    pub fri: FriProof<Felt>,
+    pub fri: FriProof<Fp3>,
     pub openings: Vec<QueryOpening>,
 }
 
@@ -112,32 +113,46 @@ fn boundary_inverses(point: Felt, boundary_points: &[Felt]) -> Vec<Felt> {
     poly::batch_inverse(&denominators)
 }
 
+// The random linear combination of constraint quotients. Weights and the
+// permutation challenges live in the extension; the trace, boundary and
+// vanishing terms stay in the base field and are lifted into the extension
+// only when combined, so the composition column is an extension codeword.
 fn composition_value(
     air: &Air,
-    weights: &[Felt],
-    challenges: &[Felt],
+    weights: &[Fp3],
+    challenges: &[Fp3],
     point: Felt,
     last_point: Felt,
     vanishing_inv: Felt,
     boundary_inv: &[Felt],
     current: &[Felt],
     next: &[Felt],
-) -> Felt {
-    let mut acc = Felt::ZERO;
+) -> Fp3 {
+    let mut acc = Fp3::ZERO;
     let mut index = 0;
     for constraint in air.transitions() {
-        let value = (constraint.rule)(current, next, challenges);
+        let value = (constraint.rule)(current, next);
         let quotient = if constraint.exclude_last {
             value.mul(point.sub(last_point)).mul(vanishing_inv)
         } else {
             value.mul(vanishing_inv)
         };
-        acc = acc.add(weights[index].mul(quotient));
+        acc = acc.add(weights[index].scale(quotient));
         index += 1;
     }
     for (boundary, inverse) in air.boundaries().iter().zip(boundary_inv) {
         let value = current[boundary.column].sub(boundary.value);
-        acc = acc.add(weights[index].mul(value.mul(*inverse)));
+        acc = acc.add(weights[index].scale(value.mul(*inverse)));
+        index += 1;
+    }
+    for permutation in air.permutations() {
+        let num = (permutation.num_factor)(current, challenges);
+        let den = (permutation.den_factor)(current, challenges);
+        let p_current = permutation.running_product(current);
+        let p_next = permutation.running_product(next);
+        // Wrap constraint over the whole trace domain: den*P_next - num*P_cur.
+        let value = den.mul(p_next).sub(num.mul(p_current));
+        acc = acc.add(weights[index].mul(value.scale(vanishing_inv)));
         index += 1;
     }
     acc
@@ -177,8 +192,8 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
 
     let mut transcript = Transcript::new();
     transcript.absorb_digest(&trace_root);
-    let challenges: Vec<Felt> = (0..air.num_challenges())
-        .map(|_| transcript.challenge_felt())
+    let challenges: Vec<Fp3> = (0..air.num_challenges())
+        .map(|_| transcript.challenge_ext())
         .collect();
 
     let mut column_lde = base_lde;
@@ -201,9 +216,10 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         None
     };
 
-    let num_constraints = air.transitions().len() + air.boundaries().len();
-    let weights: Vec<Felt> = (0..num_constraints)
-        .map(|_| transcript.challenge_felt())
+    let num_constraints =
+        air.transitions().len() + air.boundaries().len() + air.permutations().len();
+    let weights: Vec<Fp3> = (0..num_constraints)
+        .map(|_| transcript.challenge_ext())
         .collect();
 
     let last_point = domain.last_point();
@@ -221,7 +237,7 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         boundary_inv_columns.push(poly::batch_inverse(&denominators));
     }
 
-    let mut composition = vec![Felt::ZERO; domain.size];
+    let mut composition = vec![Fp3::ZERO; domain.size];
     let mut current = vec![Felt::ZERO; air.width()];
     let mut next = vec![Felt::ZERO; air.width()];
     let mut boundary_inv = vec![Felt::ZERO; boundary_points.len()];
@@ -297,15 +313,16 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
     let has_aux = air.aux_width() > 0;
     let mut transcript = Transcript::new();
     transcript.absorb_digest(&proof.trace_root);
-    let challenges: Vec<Felt> = (0..air.num_challenges())
-        .map(|_| transcript.challenge_felt())
+    let challenges: Vec<Fp3> = (0..air.num_challenges())
+        .map(|_| transcript.challenge_ext())
         .collect();
     if has_aux {
         transcript.absorb_digest(&proof.aux_root);
     }
-    let num_constraints = air.transitions().len() + air.boundaries().len();
-    let weights: Vec<Felt> = (0..num_constraints)
-        .map(|_| transcript.challenge_felt())
+    let num_constraints =
+        air.transitions().len() + air.boundaries().len() + air.permutations().len();
+    let weights: Vec<Fp3> = (0..num_constraints)
+        .map(|_| transcript.challenge_ext())
         .collect();
 
     if !fri::verify(&domain.fri_params(params.num_queries), &proof.fri) {
@@ -463,6 +480,17 @@ mod tests {
     }
 
     #[test]
+    fn a_tampered_extension_composition_value_is_rejected() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        let mut proof = prove(&air, &trace, &params());
+        // The composition codeword now lives in the cubic extension; perturb a
+        // single opened extension value and confirm the verifier rejects.
+        let eval = proof.fri.queries[0].layers[0].eval;
+        proof.fri.queries[0].layers[0].eval = eval.add(Fp3::ONE);
+        assert!(!verify(&air, &params(), &proof));
+    }
+
+    #[test]
     fn a_verifier_with_a_different_boundary_rejects() {
         let (air, trace) = squaring(16, Felt::new(3));
         let proof = prove(&air, &trace, &params());
@@ -496,8 +524,8 @@ mod tests {
         let gamma = air.add_challenge();
         air.add_permutation(
             1,
-            move |row, ch| ch[gamma].sub(row[0]),
-            move |row, ch| ch[gamma].sub(row[1]),
+            move |row, ch| ch[gamma].sub_base(row[0]),
+            move |row, ch| ch[gamma].sub_base(row[1]),
         );
         let mut trace = TraceTable::new(2, length);
         let source: Vec<Felt> = (0..length)

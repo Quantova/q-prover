@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use crate::field::Felt;
+use crate::field_ext::Fp3;
 
 pub struct TraceTable {
     width: usize,
@@ -51,8 +52,7 @@ impl TraceTable {
 pub struct Transition {
     pub degree: usize,
     pub exclude_last: bool,
-    pub uses_challenges: bool,
-    pub rule: Box<dyn Fn(&[Felt], &[Felt], &[Felt]) -> Felt + Sync>,
+    pub rule: Box<dyn Fn(&[Felt], &[Felt]) -> Felt + Sync>,
 }
 
 pub struct Boundary {
@@ -61,11 +61,31 @@ pub struct Boundary {
     pub value: Felt,
 }
 
-type Factor = Arc<dyn Fn(&[Felt], &[Felt]) -> Felt + Send + Sync>;
+// A permutation factor reads base-field trace cells and the extension-field
+// challenges and returns an extension-field value. The running-product column
+// it drives therefore lives in the extension.
+type Factor = Arc<dyn Fn(&[Felt], &[Fp3]) -> Fp3 + Send + Sync>;
 
-struct Permutation {
-    num_factor: Factor,
-    den_factor: Factor,
+// Each extension-field running-product column is stored as three base-field
+// limb columns, so the trace commitment stays over the base field.
+pub const AUX_LIMBS: usize = 3;
+
+pub struct Permutation {
+    pub num_factor: Factor,
+    pub den_factor: Factor,
+    pub degree: usize,
+    // Base index of the first of this permutation's three aux limb columns.
+    pub aux_base: usize,
+}
+
+impl Permutation {
+    pub fn running_product(&self, row: &[Felt]) -> Fp3 {
+        Fp3::new(
+            row[self.aux_base],
+            row[self.aux_base + 1],
+            row[self.aux_base + 2],
+        )
+    }
 }
 
 pub struct Air {
@@ -120,6 +140,10 @@ impl Air {
         &self.boundaries
     }
 
+    pub fn permutations(&self) -> &[Permutation] {
+        &self.permutations
+    }
+
     pub fn add_transition<F>(&mut self, degree: usize, rule: F)
     where
         F: Fn(&[Felt], &[Felt]) -> Felt + Sync + 'static,
@@ -127,8 +151,7 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: true,
-            uses_challenges: false,
-            rule: Box::new(move |current, next, _challenges| rule(current, next)),
+            rule: Box::new(rule),
         });
     }
 
@@ -139,8 +162,7 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: false,
-            uses_challenges: false,
-            rule: Box::new(move |current, _next, _challenges| rule(current)),
+            rule: Box::new(move |current, _next| rule(current)),
         });
     }
 
@@ -151,8 +173,7 @@ impl Air {
         self.transitions.push(Transition {
             degree,
             exclude_last: false,
-            uses_challenges: false,
-            rule: Box::new(move |current, next, _challenges| rule(current, next)),
+            rule: Box::new(rule),
         });
     }
 
@@ -168,37 +189,28 @@ impl Air {
 
     pub fn add_permutation<N, D>(&mut self, degree: usize, num_factor: N, den_factor: D) -> usize
     where
-        N: Fn(&[Felt], &[Felt]) -> Felt + Send + Sync + 'static,
-        D: Fn(&[Felt], &[Felt]) -> Felt + Send + Sync + 'static,
+        N: Fn(&[Felt], &[Fp3]) -> Fp3 + Send + Sync + 'static,
+        D: Fn(&[Felt], &[Fp3]) -> Fp3 + Send + Sync + 'static,
     {
-        let aux_col = self.base_width + self.aux_width;
-        self.aux_width += 1;
-        self.add_boundary(aux_col, 0, Felt::ONE);
+        let aux_base = self.base_width + self.aux_width;
+        self.aux_width += AUX_LIMBS;
+        // The running product starts at the extension one, stored limbwise.
+        self.add_boundary(aux_base, 0, Felt::ONE);
+        self.add_boundary(aux_base + 1, 0, Felt::ZERO);
+        self.add_boundary(aux_base + 2, 0, Felt::ZERO);
 
-        let num: Factor = Arc::new(num_factor);
-        let den: Factor = Arc::new(den_factor);
-        let num_rule = num.clone();
-        let den_rule = den.clone();
-        self.transitions.push(Transition {
-            degree: degree + 1,
-            exclude_last: false,
-            uses_challenges: true,
-            rule: Box::new(move |current, next, challenges| {
-                let numerator = current[aux_col].mul(num_rule(current, challenges));
-                let denominator = next[aux_col].mul(den_rule(current, challenges));
-                denominator.sub(numerator)
-            }),
-        });
         self.permutations.push(Permutation {
-            num_factor: num,
-            den_factor: den,
+            num_factor: Arc::new(num_factor),
+            den_factor: Arc::new(den_factor),
+            degree: degree + 1,
+            aux_base,
         });
-        aux_col
+        aux_base
     }
 
-    pub fn build_aux(&self, base: &TraceTable, challenges: &[Felt]) -> Vec<Vec<Felt>> {
+    pub fn build_aux(&self, base: &TraceTable, challenges: &[Fp3]) -> Vec<Vec<Felt>> {
         let n = self.length;
-        let mut columns = Vec::with_capacity(self.permutations.len());
+        let mut columns = Vec::with_capacity(self.permutations.len() * AUX_LIMBS);
         for permutation in &self.permutations {
             let mut numerators = Vec::with_capacity(n);
             let mut denominators = Vec::with_capacity(n);
@@ -207,19 +219,30 @@ impl Air {
                 numerators.push((permutation.num_factor)(&current, challenges));
                 denominators.push((permutation.den_factor)(&current, challenges));
             }
-            let denominator_inv = crate::poly::batch_inverse(&denominators);
-            let mut column = vec![Felt::ONE; n];
-            let mut running = Felt::ONE;
+            let denominator_inv = crate::poly::batch_inverse_ext(&denominators);
+            let mut product = vec![Fp3::ONE; n];
+            let mut running = Fp3::ONE;
             for row in 0..n - 1 {
                 running = running.mul(numerators[row]).mul(denominator_inv[row]);
-                column[row + 1] = running;
+                product[row + 1] = running;
             }
-            columns.push(column);
+            let mut limb0 = Vec::with_capacity(n);
+            let mut limb1 = Vec::with_capacity(n);
+            let mut limb2 = Vec::with_capacity(n);
+            for value in &product {
+                let [a0, a1, a2] = value.coefficients();
+                limb0.push(a0);
+                limb1.push(a1);
+                limb2.push(a2);
+            }
+            columns.push(limb0);
+            columns.push(limb1);
+            columns.push(limb2);
         }
         columns
     }
 
-    pub fn assemble(&self, base: &TraceTable, challenges: &[Felt]) -> TraceTable {
+    pub fn assemble(&self, base: &TraceTable, challenges: &[Fp3]) -> TraceTable {
         let aux = self.build_aux(base, challenges);
         let mut full = TraceTable::new(self.width().max(1), self.length);
         for column in 0..self.base_width {
@@ -236,12 +259,9 @@ impl Air {
     }
 
     pub fn max_degree(&self) -> usize {
-        self.transitions
-            .iter()
-            .map(|t| t.degree)
-            .max()
-            .unwrap_or(1)
-            .max(1)
+        let transition_degree = self.transitions.iter().map(|t| t.degree).max().unwrap_or(1);
+        let permutation_degree = self.permutations.iter().map(|p| p.degree).max().unwrap_or(1);
+        transition_degree.max(permutation_degree).max(1)
     }
 
     pub fn is_satisfied(&self, trace: &TraceTable) -> bool {
@@ -250,13 +270,10 @@ impl Air {
             let current = trace.row(row);
             let next = trace.row((row + 1) % n);
             for constraint in &self.transitions {
-                if constraint.uses_challenges {
-                    continue;
-                }
                 if constraint.exclude_last && row == n - 1 {
                     continue;
                 }
-                if (constraint.rule)(&current, &next, &[]) != Felt::ZERO {
+                if (constraint.rule)(&current, &next) != Felt::ZERO {
                     return false;
                 }
             }
@@ -272,7 +289,7 @@ impl Air {
         true
     }
 
-    pub fn is_satisfied_with(&self, base: &TraceTable, challenges: &[Felt]) -> bool {
+    pub fn is_satisfied_with(&self, base: &TraceTable, challenges: &[Fp3]) -> bool {
         assert_eq!(base.width(), self.base_width, "base trace width mismatch");
         assert_eq!(
             challenges.len(),
@@ -288,7 +305,16 @@ impl Air {
                 if constraint.exclude_last && row == n - 1 {
                     continue;
                 }
-                if (constraint.rule)(&current, &next, challenges) != Felt::ZERO {
+                if (constraint.rule)(&current, &next) != Felt::ZERO {
+                    return false;
+                }
+            }
+            for permutation in &self.permutations {
+                let num = (permutation.num_factor)(&current, challenges);
+                let den = (permutation.den_factor)(&current, challenges);
+                let p_current = permutation.running_product(&current);
+                let p_next = permutation.running_product(&next);
+                if den.mul(p_next).sub(num.mul(p_current)) != Fp3::ZERO {
                     return false;
                 }
             }
@@ -386,10 +412,14 @@ mod tests {
         let gamma = air.add_challenge();
         air.add_permutation(
             1,
-            move |row, ch| ch[gamma].sub(row[0]),
-            move |row, ch| ch[gamma].sub(row[1]),
+            move |row, ch| ch[gamma].sub_base(row[0]),
+            move |row, ch| ch[gamma].sub_base(row[1]),
         );
         air
+    }
+
+    fn ext_challenge(raw: u64) -> Fp3 {
+        Fp3::new(Felt::new(raw), Felt::new(raw ^ 0x5555), Felt::new(raw ^ 0xa33f))
     }
 
     #[test]
@@ -402,9 +432,9 @@ mod tests {
             base.set(0, row, Felt::new(source[row]));
             base.set(1, row, Felt::new(shuffled[row]));
         }
-        let challenges = [Felt::new(20015998343868)];
+        let challenges = [ext_challenge(20015998343868)];
         assert_eq!(air.num_challenges(), 1);
-        assert_eq!(air.aux_width(), 1);
+        assert_eq!(air.aux_width(), AUX_LIMBS);
         assert!(air.is_satisfied_with(&base, &challenges));
     }
 
@@ -418,7 +448,7 @@ mod tests {
             base.set(0, row, Felt::new(source[row]));
             base.set(1, row, Felt::new(shuffled[row]));
         }
-        let challenges = [Felt::new(20015998343868)];
+        let challenges = [ext_challenge(20015998343868)];
         assert!(!air.is_satisfied_with(&base, &challenges));
     }
 
@@ -431,10 +461,13 @@ mod tests {
             base.set(0, row, Felt::new(values[row]));
             base.set(1, row, Felt::new(values[7 - row]));
         }
-        let challenges = [Felt::new(173961102589770)];
+        let challenges = [ext_challenge(173961102589770)];
         let aux = air.build_aux(&base, &challenges);
-        assert_eq!(aux.len(), 1);
+        assert_eq!(aux.len(), AUX_LIMBS);
+        // Limb layout of the extension one at row zero: (1, 0, 0).
         assert_eq!(aux[0][0], Felt::ONE);
+        assert_eq!(aux[1][0], Felt::ZERO);
+        assert_eq!(aux[2][0], Felt::ZERO);
         assert!(air.is_satisfied_with(&base, &challenges));
     }
 }

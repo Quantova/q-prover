@@ -24,8 +24,8 @@ pub fn batch_air(length: usize) -> Air {
     let hint_r = HINT_BASE + hint::COL_R;
     air.add_permutation(
         1,
-        move |row, ch| ch[gamma].sub(row[dec_r]),
-        move |row, ch| ch[gamma].sub(row[hint_r]),
+        move |row, ch| ch[gamma].sub_base(row[dec_r]),
+        move |row, ch| ch[gamma].sub_base(row[hint_r]),
     );
 
     air
@@ -88,6 +88,7 @@ pub fn batch_trace(
 mod tests {
     use super::*;
     use crate::field::Felt;
+    use crate::field_ext::Fp3;
     use crate::stark::{prove, verify, StarkParams};
 
     fn params() -> StarkParams {
@@ -125,7 +126,11 @@ mod tests {
     #[test]
     fn the_permutation_binds_the_shared_coefficients() {
         let cert = sample_batch();
-        let challenges = [Felt::new(20015998343868)];
+        let challenges = [Fp3::new(
+            Felt::new(20015998343868),
+            Felt::new(77),
+            Felt::new(4242),
+        )];
         assert!(cert.air.is_satisfied_with(&cert.trace, &challenges));
     }
 
@@ -135,7 +140,11 @@ mod tests {
         let mut trace = cert.trace;
         let hint_r = HINT_BASE + hint::COL_R;
         trace.set(hint_r, 3, trace.get(hint_r, 3).add(Felt::new(5)));
-        let challenges = [Felt::new(20015998343868)];
+        let challenges = [Fp3::new(
+            Felt::new(20015998343868),
+            Felt::new(77),
+            Felt::new(4242),
+        )];
         assert!(!cert.air.is_satisfied_with(&trace, &challenges));
     }
 

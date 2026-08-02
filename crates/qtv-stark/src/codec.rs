@@ -3,6 +3,7 @@
 
 
 use crate::field::Felt;
+use crate::field_ext::Fp3;
 use crate::fri::{FriProof, QueryLayer, QueryProof};
 use crate::merkle::{Digest, MerkleProof};
 use crate::stark::{QueryOpening, RowOpening, StarkProof};
@@ -13,6 +14,12 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
 
 fn put_felt(out: &mut Vec<u8>, value: Felt) {
     put_u64(out, value.to_u64());
+}
+
+fn put_ext(out: &mut Vec<u8>, value: Fp3) {
+    for limb in value.to_u64s() {
+        put_u64(out, limb);
+    }
 }
 
 fn put_digest(out: &mut Vec<u8>, digest: &Digest) {
@@ -38,15 +45,15 @@ pub fn encode_proof(proof: &StarkProof) -> Vec<u8> {
     }
     put_u64(&mut out, proof.fri.final_layer.len() as u64);
     for value in &proof.fri.final_layer {
-        put_felt(&mut out, *value);
+        put_ext(&mut out, *value);
     }
     put_u64(&mut out, proof.fri.queries.len() as u64);
     for query in &proof.fri.queries {
         put_u64(&mut out, query.position as u64);
         put_u64(&mut out, query.layers.len() as u64);
         for layer in &query.layers {
-            put_felt(&mut out, layer.eval);
-            put_felt(&mut out, layer.sibling);
+            put_ext(&mut out, layer.eval);
+            put_ext(&mut out, layer.sibling);
             put_merkle(&mut out, &layer.eval_path);
             put_merkle(&mut out, &layer.sibling_path);
         }
@@ -103,6 +110,13 @@ impl<'a> Reader<'a> {
         Some(Felt::new(self.u64()?))
     }
 
+    fn ext(&mut self) -> Option<Fp3> {
+        let a0 = self.u64()?;
+        let a1 = self.u64()?;
+        let a2 = self.u64()?;
+        Some(Fp3::from_u64s([a0, a1, a2]))
+    }
+
     fn digest(&mut self) -> Option<Digest> {
         let slice = self.take(32)?;
         let mut buf = [0u8; 32];
@@ -141,7 +155,7 @@ pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
     let final_count = reader.count()?;
     let mut final_layer = Vec::new();
     for _ in 0..final_count {
-        final_layer.push(reader.felt()?);
+        final_layer.push(reader.ext()?);
     }
     let query_count = reader.count()?;
     let mut queries = Vec::new();
@@ -150,8 +164,8 @@ pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
         let layer_count = reader.count()?;
         let mut layers = Vec::new();
         for _ in 0..layer_count {
-            let eval = reader.felt()?;
-            let sibling = reader.felt()?;
+            let eval = reader.ext()?;
+            let sibling = reader.ext()?;
             let eval_path = reader.merkle()?;
             let sibling_path = reader.merkle()?;
             layers.push(QueryLayer {

@@ -374,6 +374,7 @@ pub fn signing_jobs() -> Vec<Job> {
 mod tests {
     use super::*;
     use crate::field::Felt;
+    use crate::field_ext::Fp3;
     use crate::stark::{prove, verify, StarkParams};
 
     #[test]
@@ -403,7 +404,7 @@ mod tests {
 
     #[test]
     fn every_job_arithmetic_holds() {
-        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
+        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
         for job in signing_jobs() {
             let ok = if job.prover.num_challenges() == 0 {
                 job.prover.is_satisfied(&job.trace)
