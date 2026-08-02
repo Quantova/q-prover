@@ -164,6 +164,48 @@ impl Fp3 {
     }
 }
 
+impl crate::fri::FriField for Fp3 {
+    const LIMBS: usize = 3;
+
+    fn zero() -> Self {
+        Fp3::ZERO
+    }
+    fn add(self, other: Self) -> Self {
+        Fp3::add(self, other)
+    }
+    fn sub(self, other: Self) -> Self {
+        Fp3::sub(self, other)
+    }
+    fn mul(self, other: Self) -> Self {
+        Fp3::mul(self, other)
+    }
+    fn scale(self, scalar: Felt) -> Self {
+        Fp3::scale(self, scalar)
+    }
+    fn from_base(value: Felt) -> Self {
+        Fp3::from_base(value)
+    }
+    fn sample(transcript: &mut crate::fri::Transcript) -> Self {
+        transcript.challenge_ext()
+    }
+    fn absorb(self, transcript: &mut crate::fri::Transcript) {
+        transcript.absorb_ext(self);
+    }
+    fn hash_leaf(self) -> crate::merkle::Digest {
+        let mut preimage = [0u8; 24];
+        for (i, limb) in self.to_u64s().iter().enumerate() {
+            preimage[i * 8..i * 8 + 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        qtv_crypto::sha3::sha3_256(&preimage)
+    }
+    fn to_limbs(self) -> Vec<u64> {
+        self.to_u64s().to_vec()
+    }
+    fn from_limbs(limbs: &[u64]) -> Self {
+        Fp3::from_u64s([limbs[0], limbs[1], limbs[2]])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

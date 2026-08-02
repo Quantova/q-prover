@@ -27,7 +27,7 @@ pub struct QueryOpening {
 pub struct StarkProof {
     pub trace_root: Digest,
     pub aux_root: Digest,
-    pub fri: FriProof,
+    pub fri: FriProof<Felt>,
     pub openings: Vec<QueryOpening>,
 }
 
