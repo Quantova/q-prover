@@ -12,6 +12,7 @@ pub mod encode;
 pub mod entry;
 pub mod examples;
 pub mod field;
+pub mod field_ext;
 pub mod fri;
 pub mod hashing;
 pub mod hint;
