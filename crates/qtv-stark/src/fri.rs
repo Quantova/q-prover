@@ -3,8 +3,68 @@
 
 
 use crate::field::{root_of_unity, Felt, MODULUS};
-use crate::merkle::{hash_leaf, Digest, MerkleProof, MerkleTree};
+use crate::field_ext::Fp3;
+use crate::merkle::{Digest, MerkleProof, MerkleTree};
 use qtv_crypto::sha3::sha3_256;
+
+// A field the FRI layers can live in. Folding, the codeword values and the
+// folding challenges are drawn from this field; the evaluation-domain points
+// and query positions stay in the base field.
+pub trait FriField: Copy + PartialEq + core::fmt::Debug {
+    const LIMBS: usize;
+
+    fn zero() -> Self;
+    fn add(self, other: Self) -> Self;
+    fn sub(self, other: Self) -> Self;
+    fn mul(self, other: Self) -> Self;
+    // Multiply by a base-field scalar (domain points live in the base field).
+    fn scale(self, scalar: Felt) -> Self;
+    fn from_base(value: Felt) -> Self;
+
+    fn sample(transcript: &mut Transcript) -> Self;
+    fn absorb(self, transcript: &mut Transcript);
+    fn hash_leaf(self) -> Digest;
+    fn to_limbs(self) -> Vec<u64>;
+    fn from_limbs(limbs: &[u64]) -> Self;
+}
+
+impl FriField for Felt {
+    const LIMBS: usize = 1;
+
+    fn zero() -> Self {
+        Felt::ZERO
+    }
+    fn add(self, other: Self) -> Self {
+        Felt::add(self, other)
+    }
+    fn sub(self, other: Self) -> Self {
+        Felt::sub(self, other)
+    }
+    fn mul(self, other: Self) -> Self {
+        Felt::mul(self, other)
+    }
+    fn scale(self, scalar: Felt) -> Self {
+        Felt::mul(self, scalar)
+    }
+    fn from_base(value: Felt) -> Self {
+        value
+    }
+    fn sample(transcript: &mut Transcript) -> Self {
+        transcript.challenge_felt()
+    }
+    fn absorb(self, transcript: &mut Transcript) {
+        transcript.absorb_felt(self);
+    }
+    fn hash_leaf(self) -> Digest {
+        crate::merkle::hash_leaf(self)
+    }
+    fn to_limbs(self) -> Vec<u64> {
+        vec![self.to_u64()]
+    }
+    fn from_limbs(limbs: &[u64]) -> Self {
+        Felt::new(limbs[0])
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct FriParams {
@@ -27,14 +87,14 @@ impl FriParams {
     }
 }
 
-pub fn fold_pair(low: Felt, high: Felt, challenge: Felt, x_inv: Felt) -> Felt {
+pub fn fold_pair<F: FriField>(low: F, high: F, challenge: F, x_inv: Felt) -> F {
     let inv_two = Felt::new(2).inv();
     let sum = low.add(high);
     let diff = low.sub(high);
-    sum.add(challenge.mul(diff).mul(x_inv)).mul(inv_two)
+    sum.add(challenge.mul(diff).scale(x_inv)).scale(inv_two)
 }
 
-pub fn fold_layer(evaluations: &[Felt], challenge: Felt, generator_inv: Felt) -> Vec<Felt> {
+pub fn fold_layer<F: FriField>(evaluations: &[F], challenge: F, generator_inv: Felt) -> Vec<F> {
     let half = evaluations.len() / 2;
     let mut folded = Vec::with_capacity(half);
     let mut x_inv = Felt::ONE;
@@ -71,6 +131,14 @@ impl Transcript {
         self.absorb(&value.to_u64().to_le_bytes());
     }
 
+    pub fn absorb_ext(&mut self, value: Fp3) {
+        let mut bytes = [0u8; 24];
+        for (i, limb) in value.to_u64s().iter().enumerate() {
+            bytes[i * 8..i * 8 + 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        self.absorb(&bytes);
+    }
+
     fn squeeze(&mut self, domain: u8) -> Digest {
         let mut preimage = [0u8; 33];
         preimage[..32].copy_from_slice(&self.state);
@@ -89,6 +157,15 @@ impl Transcript {
         Felt::new((wide % (MODULUS as u128)) as u64)
     }
 
+    // Sample a uniform element of the cubic extension by drawing three
+    // independent base-field limbs from the transcript.
+    pub fn challenge_ext(&mut self) -> Fp3 {
+        let a0 = self.challenge_felt();
+        let a1 = self.challenge_felt();
+        let a2 = self.challenge_felt();
+        Fp3::new(a0, a1, a2)
+    }
+
     pub fn challenge_index(&mut self, bound: usize) -> usize {
         let out = self.squeeze(2);
         let mut wide: u64 = 0;
@@ -105,30 +182,30 @@ impl Default for Transcript {
     }
 }
 
-pub struct QueryLayer {
-    pub eval: Felt,
-    pub sibling: Felt,
+pub struct QueryLayer<F: FriField> {
+    pub eval: F,
+    pub sibling: F,
     pub eval_path: MerkleProof,
     pub sibling_path: MerkleProof,
 }
 
-pub struct QueryProof {
+pub struct QueryProof<F: FriField> {
     pub position: usize,
-    pub layers: Vec<QueryLayer>,
+    pub layers: Vec<QueryLayer<F>>,
 }
 
-pub struct FriProof {
+pub struct FriProof<F: FriField> {
     pub layer_roots: Vec<Digest>,
-    pub final_layer: Vec<Felt>,
-    pub queries: Vec<QueryProof>,
+    pub final_layer: Vec<F>,
+    pub queries: Vec<QueryProof<F>>,
 }
 
-fn commit_layer(values: &[Felt]) -> MerkleTree {
-    let leaves: Vec<Digest> = values.iter().map(|v| hash_leaf(*v)).collect();
+fn commit_layer<F: FriField>(values: &[F]) -> MerkleTree {
+    let leaves: Vec<Digest> = values.iter().map(|v| v.hash_leaf()).collect();
     MerkleTree::commit(&leaves)
 }
 
-pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
+pub fn prove<F: FriField>(evaluations: &[F], params: &FriParams) -> FriProof<F> {
     let n = params.domain_size();
     assert_eq!(
         evaluations.len(),
@@ -143,7 +220,7 @@ pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
     assert!(rounds >= 1, "the schedule needs at least one fold");
 
     let mut transcript = Transcript::new();
-    let mut layers: Vec<Vec<Felt>> = vec![evaluations.to_vec()];
+    let mut layers: Vec<Vec<F>> = vec![evaluations.to_vec()];
     let mut trees: Vec<MerkleTree> = Vec::with_capacity(rounds);
     let mut layer_roots: Vec<Digest> = Vec::with_capacity(rounds);
 
@@ -153,10 +230,10 @@ pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
     trees.push(first_tree);
 
     let mut generator_inv = root_of_unity(params.log_domain_size).inv();
-    let mut final_layer: Vec<Felt> = Vec::new();
+    let mut final_layer: Vec<F> = Vec::new();
 
     for round in 0..rounds {
-        let challenge = transcript.challenge_felt();
+        let challenge = F::sample(&mut transcript);
         let folded = fold_layer(&layers[round], challenge, generator_inv);
         if round < rounds - 1 {
             let tree = commit_layer(&folded);
@@ -167,7 +244,7 @@ pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
             generator_inv = generator_inv.mul(generator_inv);
         } else {
             for value in &folded {
-                transcript.absorb_felt(*value);
+                value.absorb(&mut transcript);
             }
             final_layer = folded;
         }
@@ -202,7 +279,7 @@ pub fn prove(evaluations: &[Felt], params: &FriParams) -> FriProof {
     }
 }
 
-pub fn verify(params: &FriParams, proof: &FriProof) -> bool {
+pub fn verify<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
     let n = params.domain_size();
     if !params.blowup.is_power_of_two() {
         return false;
@@ -225,12 +302,12 @@ pub fn verify(params: &FriParams, proof: &FriProof) -> bool {
     transcript.absorb_digest(&proof.layer_roots[0]);
     let mut challenges = Vec::with_capacity(rounds);
     for round in 0..rounds {
-        challenges.push(transcript.challenge_felt());
+        challenges.push(F::sample(&mut transcript));
         if round < rounds - 1 {
             transcript.absorb_digest(&proof.layer_roots[round + 1]);
         } else {
             for value in &proof.final_layer {
-                transcript.absorb_felt(*value);
+                value.absorb(&mut transcript);
             }
         }
     }
@@ -263,14 +340,14 @@ pub fn verify(params: &FriParams, proof: &FriProof) -> bool {
             }
             if !crate::merkle::verify(
                 &proof.layer_roots[round],
-                &hash_leaf(layer.eval),
+                &layer.eval.hash_leaf(),
                 &layer.eval_path,
             ) {
                 return false;
             }
             if !crate::merkle::verify(
                 &proof.layer_roots[round],
-                &hash_leaf(layer.sibling),
+                &layer.sibling.hash_leaf(),
                 &layer.sibling_path,
             ) {
                 return false;
@@ -319,6 +396,27 @@ mod tests {
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
             out.push(eval_poly(coeffs, point));
+            point = point.mul(omega);
+        }
+        out
+    }
+
+    // Extension-field low-degree extension of a polynomial with Fp3 coefficients.
+    fn eval_poly_ext(coeffs: &[Fp3], point: Felt) -> Fp3 {
+        let mut acc = Fp3::ZERO;
+        for coeff in coeffs.iter().rev() {
+            acc = acc.scale(point).add(*coeff);
+        }
+        acc
+    }
+
+    fn eval_domain_ext(coeffs: &[Fp3], log_n: u32) -> Vec<Fp3> {
+        let n = 1usize << log_n;
+        let omega = root_of_unity(log_n);
+        let mut point = Felt::ONE;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            out.push(eval_poly_ext(coeffs, point));
             point = point.mul(omega);
         }
         out
@@ -373,6 +471,21 @@ mod tests {
         b.absorb(b"same");
         assert_eq!(a.challenge_felt(), b.challenge_felt());
         assert_eq!(a.challenge_index(64), b.challenge_index(64));
+    }
+
+    #[test]
+    fn extension_challenges_are_deterministic_and_full_width() {
+        let mut a = Transcript::new();
+        let mut b = Transcript::new();
+        a.absorb(b"same ext seed");
+        b.absorb(b"same ext seed");
+        let x = a.challenge_ext();
+        let y = b.challenge_ext();
+        assert_eq!(x, y);
+        // A transcript draw should exercise the whole extension, not just the base.
+        assert!(!x.is_base());
+        let z = a.challenge_ext();
+        assert_ne!(x, z);
     }
 
     #[test]
@@ -445,5 +558,62 @@ mod tests {
         let last = proof.final_layer.len() - 1;
         proof.final_layer[last] = proof.final_layer[last].add(Felt::ONE);
         assert!(!verify(&params, &proof));
+    }
+
+    // The same FRI protocol run over the cubic extension field.
+    #[test]
+    fn an_extension_low_degree_vector_is_accepted() {
+        let params = sample_params();
+        let coeffs: Vec<Fp3> = (0..params.degree_bound() as u64)
+            .map(|i| {
+                Fp3::new(
+                    Felt::new(i.wrapping_mul(2654435769) ^ 81),
+                    Felt::new(i.wrapping_mul(40503) ^ 17),
+                    Felt::new(i.wrapping_mul(2246822519) ^ 5),
+                )
+            })
+            .collect();
+        let evals = eval_domain_ext(&coeffs, params.log_domain_size);
+        let proof = prove(&evals, &params);
+        assert!(verify(&params, &proof));
+    }
+
+    #[test]
+    fn an_extension_high_degree_vector_is_rejected() {
+        let params = sample_params();
+        let coeffs: Vec<Fp3> = (0..params.domain_size() as u64)
+            .map(|i| {
+                Fp3::new(
+                    Felt::new(i.wrapping_mul(3518319154) ^ 47),
+                    Felt::new(i.wrapping_mul(1013904223) ^ 9),
+                    Felt::new(i.wrapping_mul(22695477) ^ 3),
+                )
+            })
+            .collect();
+        let evals = eval_domain_ext(&coeffs, params.log_domain_size);
+        let proof = prove(&evals, &params);
+        assert!(!verify(&params, &proof));
+    }
+
+    #[test]
+    fn an_extension_tampered_opening_is_rejected() {
+        let params = sample_params();
+        let coeffs: Vec<Fp3> = (0..params.degree_bound() as u64)
+            .map(|i| Fp3::from_base(Felt::new(i)))
+            .collect();
+        let evals = eval_domain_ext(&coeffs, params.log_domain_size);
+        let mut proof = prove(&evals, &params);
+        proof.queries[0].layers[0].eval = proof.queries[0].layers[0].eval.add(Fp3::ONE);
+        assert!(!verify(&params, &proof));
+    }
+
+    #[test]
+    fn an_extension_folding_challenge_lives_in_the_extension() {
+        // Sanity check that the FRI folding challenge for the Fp3 instance is
+        // a genuine extension element (not accidentally reduced to the base).
+        let mut transcript = Transcript::new();
+        transcript.absorb_digest(&[9u8; 32]);
+        let challenge = <Fp3 as FriField>::sample(&mut transcript);
+        assert!(!challenge.is_base());
     }
 }

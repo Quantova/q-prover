@@ -5,7 +5,7 @@
 use crate::field::Felt;
 use crate::fri::{prove as fri_prove, FriParams};
 
-pub use crate::fri::FriProof as Proof;
+pub type Proof = crate::fri::FriProof<Felt>;
 
 pub struct PublicInputs {
     pub params: FriParams,
