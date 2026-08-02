@@ -28,7 +28,7 @@ fn eval_domain(coeffs: &[Felt], log_n: u32) -> Vec<Felt> {
     out
 }
 
-fn proof_bytes(proof: &qtv_stark::fri::FriProof) -> usize {
+fn proof_bytes(proof: &qtv_stark::fri::FriProof<Felt>) -> usize {
     let mut total = proof.layer_roots.len() * 32;
     total += proof.final_layer.len() * 8;
     for query in &proof.queries {
