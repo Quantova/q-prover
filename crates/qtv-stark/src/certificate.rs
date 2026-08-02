@@ -94,24 +94,24 @@ pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
 
     air.add_permutation(
         1,
-        move |row, ch| ch[gamma].sub(row[R_R]),
-        move |row, ch| ch[gamma].sub(row[dec_r]),
+        move |row, ch| ch[gamma].sub_base(row[R_R]),
+        move |row, ch| ch[gamma].sub_base(row[dec_r]),
     );
     air.add_permutation(
         1,
-        move |row, ch| ch[gamma].sub(row[R_R]),
-        move |row, ch| ch[gamma].sub(row[hint_r]),
+        move |row, ch| ch[gamma].sub_base(row[R_R]),
+        move |row, ch| ch[gamma].sub_base(row[hint_r]),
     );
     air.add_permutation(
         1,
-        move |row, ch| ch[gamma].sub(row[R_R]),
-        move |row, ch| ch[gamma].sub(row[mm_a]),
+        move |row, ch| ch[gamma].sub_base(row[R_R]),
+        move |row, ch| ch[gamma].sub_base(row[mm_a]),
     );
 
     air.add_permutation(
         1,
-        move |row, ch| ch[gamma].sub(row[mm_b]),
-        move |row, ch| ch[gamma].sub(row[norm_z]),
+        move |row, ch| ch[gamma].sub_base(row[mm_b]),
+        move |row, ch| ch[gamma].sub_base(row[norm_z]),
     );
 
     air
@@ -190,6 +190,7 @@ pub fn certificate_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field_ext::Fp3;
     use crate::stark::{prove, verify, StarkParams};
 
     fn params() -> StarkParams {
@@ -199,8 +200,12 @@ mod tests {
         }
     }
 
-    fn challenges() -> [Felt; 1] {
-        [Felt::new(20015998343868)]
+    fn challenges() -> [Fp3; 1] {
+        [Fp3::new(
+            Felt::new(20015998343868),
+            Felt::new(77),
+            Felt::new(4242),
+        )]
     }
 
     fn responses() -> Vec<u64> {
@@ -235,6 +240,20 @@ mod tests {
         let proof = prove(&cert.air, &cert.trace, &params());
         let air = certificate_air(2, b"module lattice fused certificate", &cert.output);
         assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_tampered_certificate_trace_is_rejected() {
+        let cert = sample();
+        let mut trace = cert.trace;
+        // Corrupt a committed reduction cell. The reduction constraint and the
+        // extension-field permutation binding both break, so a proof built over
+        // the tampered trace is rejected by the extension-field verifier.
+        let row = squeeze_row(0);
+        trace.set(R_R, row, trace.get(R_R, row).add(Felt::ONE));
+        let proof = prove(&cert.air, &trace, &params());
+        let air = certificate_air(2, b"module lattice fused certificate", &cert.output);
+        assert!(!verify(&air, &params(), &proof));
     }
 
     #[test]

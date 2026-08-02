@@ -3,6 +3,7 @@
 
 
 use crate::field::{root_of_unity, Felt};
+use crate::field_ext::Fp3;
 
 pub fn ntt(values: &mut [Felt], omega: Felt) {
     let n = values.len();
@@ -108,6 +109,25 @@ pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
     out
 }
 
+// Batch inverse over the cubic extension, mirroring batch_inverse and folding
+// all inversions into a single extension inverse.
+pub fn batch_inverse_ext(values: &[Fp3]) -> Vec<Fp3> {
+    let n = values.len();
+    let mut prefix = vec![Fp3::ONE; n];
+    let mut running = Fp3::ONE;
+    for i in 0..n {
+        prefix[i] = running;
+        running = running.mul(values[i]);
+    }
+    let mut inverse = running.inv();
+    let mut out = vec![Fp3::ZERO; n];
+    for i in (0..n).rev() {
+        out[i] = prefix[i].mul(inverse);
+        inverse = inverse.mul(values[i]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +182,18 @@ mod tests {
         for (v, i) in values.iter().zip(inverses.iter()) {
             assert_eq!(v.mul(*i), Felt::ONE);
             assert_eq!(*i, v.inv());
+        }
+    }
+
+    #[test]
+    fn extension_batch_inverse_matches_pointwise_inverse() {
+        let values: Vec<Fp3> = (1..=20u64)
+            .map(|i| Fp3::new(Felt::new(i), Felt::new(i * 3 + 1), Felt::new(i * 7 + 5)))
+            .collect();
+        let inverses = batch_inverse_ext(&values);
+        for (v, inv) in values.iter().zip(inverses.iter()) {
+            assert_eq!(v.mul(*inv), Fp3::ONE);
+            assert_eq!(*inv, v.inv());
         }
     }
 

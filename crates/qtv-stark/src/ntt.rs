@@ -264,15 +264,15 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         3,
         move |row, ch| {
             let mask = row[sel_last];
-            let cs = ch[gamma].sub(row[S].add(ch[alpha].mul(row[S_ID])));
-            let cd = ch[gamma].sub(row[D].add(ch[alpha].mul(row[D_ID])));
-            Felt::ONE.sub(mask).mul(cs.mul(cd)).add(mask)
+            let cs = ch[gamma].sub(ch[alpha].scale(row[S_ID]).add_base(row[S]));
+            let cd = ch[gamma].sub(ch[alpha].scale(row[D_ID]).add_base(row[D]));
+            cs.mul(cd).scale(Felt::ONE.sub(mask)).add_base(mask)
         },
         move |row, ch| {
             let mask = row[sel_first];
-            let ca = ch[gamma].sub(row[A].add(ch[alpha].mul(row[A_ID])));
-            let cb = ch[gamma].sub(row[B].add(ch[alpha].mul(row[B_ID])));
-            Felt::ONE.sub(mask).mul(ca.mul(cb)).add(mask)
+            let ca = ch[gamma].sub(ch[alpha].scale(row[A_ID]).add_base(row[A]));
+            let cb = ch[gamma].sub(ch[alpha].scale(row[B_ID]).add_base(row[B]));
+            ca.mul(cb).scale(Felt::ONE.sub(mask)).add_base(mask)
         },
     );
 
@@ -298,6 +298,7 @@ pub fn to_layer_zero(coeffs: &[u64]) -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field_ext::Fp3;
     use crate::stark::{prove, verify, StarkParams};
 
     fn params() -> StarkParams {
@@ -345,7 +346,7 @@ mod tests {
     #[test]
     fn the_whole_relation_holds_under_challenges() {
         let instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
-        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
+        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
     }
 
@@ -361,7 +362,7 @@ mod tests {
     #[test]
     fn a_broken_wire_is_rejected() {
         let mut instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
-        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
+        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
         let s = instance.trace.get(S, 1);
         let d = instance.trace.get(D, 1);
@@ -436,7 +437,7 @@ mod tests {
     fn a_forged_twiddle_producing_a_false_output_is_rejected() {
         let coeffs = sample_coeffs(16);
         let instance = ntt_trace(&to_layer_zero(&coeffs));
-        let challenges = [Felt::new(305419896), Felt::new(2596069104)];
+        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
         let n = 16usize;
         let layers = (n as u32).trailing_zeros();
         let last = layers as usize - 1;
