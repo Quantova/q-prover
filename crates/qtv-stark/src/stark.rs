@@ -182,6 +182,15 @@ fn commit_rows(column_lde: &[Vec<Felt>], size: usize) -> MerkleTree {
 }
 
 pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof {
+    prove_with_domain(air, trace, params, &[])
+}
+
+pub fn prove_with_domain(
+    air: &Air,
+    trace: &TraceTable,
+    params: &StarkParams,
+    context: &[u8],
+) -> StarkProof {
     assert_eq!(trace.width(), air.base_width(), "trace width mismatch");
     assert_eq!(trace.length(), air.length(), "trace length mismatch");
     let domain = Domain::new(air, params);
@@ -190,7 +199,7 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
     let base_tree = commit_rows(&base_lde, domain.size);
     let trace_root = base_tree.root();
 
-    let mut transcript = Transcript::new();
+    let mut transcript = Transcript::with_domain(context);
     transcript.absorb_digest(&trace_root);
     let challenges: Vec<Fp3> = (0..air.num_challenges())
         .map(|_| transcript.challenge_ext())
@@ -267,7 +276,7 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
         point = point.mul(domain.omega_n);
     }
 
-    let fri_proof = fri::prove(&composition, &domain.fri_params(params.num_queries));
+    let fri_proof = fri::prove_with_domain(&composition, &domain.fri_params(params.num_queries), context);
 
     let half = domain.size / 2;
     let mut openings = Vec::with_capacity(fri_proof.queries.len());
@@ -308,10 +317,19 @@ pub fn prove(air: &Air, trace: &TraceTable, params: &StarkParams) -> StarkProof 
 }
 
 pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
+    verify_with_domain(air, params, proof, &[])
+}
+
+pub fn verify_with_domain(
+    air: &Air,
+    params: &StarkParams,
+    proof: &StarkProof,
+    context: &[u8],
+) -> bool {
     let domain = Domain::new(air, params);
     let base_width = air.base_width();
     let has_aux = air.aux_width() > 0;
-    let mut transcript = Transcript::new();
+    let mut transcript = Transcript::with_domain(context);
     transcript.absorb_digest(&proof.trace_root);
     let challenges: Vec<Fp3> = (0..air.num_challenges())
         .map(|_| transcript.challenge_ext())
@@ -325,7 +343,7 @@ pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
         .map(|_| transcript.challenge_ext())
         .collect();
 
-    if !fri::verify(&domain.fri_params(params.num_queries), &proof.fri) {
+    if !fri::verify_with_domain(&domain.fri_params(params.num_queries), &proof.fri, context) {
         return false;
     }
     if proof.openings.len() != proof.fri.queries.len() {
@@ -442,6 +460,15 @@ mod tests {
         assert!(air.is_satisfied(&trace));
         let proof = prove(&air, &trace, &params());
         assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn a_proof_bound_to_one_domain_tag_is_rejected_under_another() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        let proof = prove_with_domain(&air, &trace, &params(), b"tag-a");
+        assert!(verify_with_domain(&air, &params(), &proof, b"tag-a"));
+        assert!(!verify_with_domain(&air, &params(), &proof, b"tag-b"));
+        assert!(!verify(&air, &params(), &proof));
     }
 
     #[test]
