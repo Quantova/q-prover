@@ -16,6 +16,8 @@ pub const CERT_QUERIES: usize = 43;
 
 pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 
+pub const MAX_CERT_ROWS: usize = 1 << 24;
+
 fn params() -> StarkParams {
     StarkParams {
         lde_blowup: CERT_BLOWUP,
@@ -78,7 +80,7 @@ pub fn verify_batch(message: &[u8], context: &[u8], cert: &BatchProof) -> bool {
         return false;
     }
     match cert.segments.checked_mul(SEGMENT_ROWS) {
-        Some(rows) if rows.is_power_of_two() => {}
+        Some(rows) if rows.is_power_of_two() && rows <= MAX_CERT_ROWS => {}
         _ => return false,
     }
     let proof = match decode_proof(&cert.proof) {
@@ -126,6 +128,17 @@ mod tests {
         let message = b"module lattice batch entry point";
         let cert = prove_batch(message, CTX, 2, &[]);
         assert!(verify_batch(message, CTX, &cert));
+    }
+
+    #[test]
+    fn an_oversized_segment_count_is_rejected_without_allocating() {
+        let message = b"proof of a real certificate";
+        let good = prove_batch(message, CTX, 2, &[]);
+        let huge = BatchProof {
+            segments: 1usize << 30,
+            proof: good.proof.clone(),
+        };
+        assert!(!verify_batch(message, CTX, &huge));
     }
 
     #[test]
