@@ -83,7 +83,12 @@ impl MerkleTree {
     }
 }
 
+pub const MAX_MERKLE_DEPTH: usize = 64;
+
 pub fn verify(root: &Digest, leaf: &Digest, proof: &MerkleProof) -> bool {
+    if proof.siblings.len() > MAX_MERKLE_DEPTH {
+        return false;
+    }
     let mut acc = *leaf;
     let mut index = proof.leaf_index;
     for sibling in &proof.siblings {
