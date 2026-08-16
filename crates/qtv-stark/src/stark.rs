@@ -30,6 +30,8 @@ pub struct StarkProof {
     pub aux_root: Digest,
     pub fri: FriProof<Fp3>,
     pub openings: Vec<QueryOpening>,
+    pub trace_fri: FriProof<Fp3>,
+    pub trace_openings: Vec<QueryOpening>,
 }
 
 struct Domain {
@@ -76,6 +78,14 @@ impl Domain {
             log_domain_size: self.log_size,
             num_queries,
             blowup: self.fri_blowup,
+        }
+    }
+
+    fn trace_fri_params(&self, num_queries: usize) -> FriParams {
+        FriParams {
+            log_domain_size: self.log_size,
+            num_queries,
+            blowup: self.lde_blowup,
         }
     }
 
@@ -196,6 +206,17 @@ pub fn prove_with_domain(
     let domain = Domain::new(air, params);
 
     let base_lde = column_extensions(trace, &domain);
+    prove_columns(air, trace, &domain, base_lde, params, context)
+}
+
+fn prove_columns(
+    air: &Air,
+    trace: &TraceTable,
+    domain: &Domain,
+    base_lde: Vec<Vec<Felt>>,
+    params: &StarkParams,
+    context: &[u8],
+) -> StarkProof {
     let base_tree = commit_rows(&base_lde, domain.size);
     let trace_root = base_tree.root();
 
@@ -215,7 +236,7 @@ pub fn prove_with_domain(
                 aux_table.set(column, row, *value);
             }
         }
-        let aux_lde = column_extensions(&aux_table, &domain);
+        let aux_lde = column_extensions(&aux_table, domain);
         let tree = commit_rows(&aux_lde, domain.size);
         aux_root = tree.root();
         transcript.absorb_digest(&aux_root);
@@ -230,6 +251,21 @@ pub fn prove_with_domain(
     let weights: Vec<Fp3> = (0..num_constraints)
         .map(|_| transcript.challenge_ext())
         .collect();
+
+    let trace_challenge = transcript.challenge_ext();
+    let mut trace_combo = vec![Fp3::ZERO; domain.size];
+    let mut power = Fp3::ONE;
+    for column in &column_lde {
+        for (slot, cell) in trace_combo.iter_mut().zip(column.iter()) {
+            *slot = slot.add(power.mul(Fp3::from_base(*cell)));
+        }
+        power = power.mul(trace_challenge);
+    }
+    let trace_fri = fri::prove_with_domain(
+        &trace_combo,
+        &domain.trace_fri_params(params.num_queries),
+        &mut transcript,
+    );
 
     let last_point = domain.last_point();
     let boundary_points = domain.boundary_points(air);
@@ -276,7 +312,7 @@ pub fn prove_with_domain(
         point = point.mul(domain.omega_n);
     }
 
-    let fri_proof = fri::prove_with_domain(&composition, &domain.fri_params(params.num_queries), context);
+    let fri_proof = fri::prove_with_domain(&composition, &domain.fri_params(params.num_queries), &mut transcript);
 
     let half = domain.size / 2;
     let mut openings = Vec::with_capacity(fri_proof.queries.len());
@@ -308,11 +344,36 @@ pub fn prove_with_domain(
         openings.push(QueryOpening { rows });
     }
 
+    let mut trace_openings = Vec::with_capacity(trace_fri.queries.len());
+    for query in &trace_fri.queries {
+        let p = query.position;
+        let mut rows = Vec::with_capacity(2);
+        for &index in &[p, p + half] {
+            let values: Vec<Felt> = column_lde.iter().map(|col| col[index]).collect();
+            let aux_path = match &aux_tree {
+                Some(tree) => tree.open(index),
+                None => MerkleProof {
+                    leaf_index: index,
+                    siblings: Vec::new(),
+                },
+            };
+            rows.push(RowOpening {
+                index,
+                values,
+                path: base_tree.open(index),
+                aux_path,
+            });
+        }
+        trace_openings.push(QueryOpening { rows });
+    }
+
     StarkProof {
         trace_root,
         aux_root,
         fri: fri_proof,
         openings,
+        trace_fri,
+        trace_openings,
     }
 }
 
@@ -343,7 +404,16 @@ pub fn verify_with_domain(
         .map(|_| transcript.challenge_ext())
         .collect();
 
-    if !fri::verify_with_domain(&domain.fri_params(params.num_queries), &proof.fri, context) {
+    let trace_challenge = transcript.challenge_ext();
+    if !fri::verify_with_domain(
+        &domain.trace_fri_params(params.num_queries),
+        &proof.trace_fri,
+        &mut transcript,
+    ) {
+        return false;
+    }
+
+    if !fri::verify_with_domain(&domain.fri_params(params.num_queries), &proof.fri, &mut transcript) {
         return false;
     }
     if proof.openings.len() != proof.fri.queries.len() {
@@ -427,6 +497,58 @@ pub fn verify_with_domain(
         }
     }
 
+    if proof.trace_openings.len() != proof.trace_fri.queries.len() {
+        return false;
+    }
+    for (query, opening) in proof.trace_fri.queries.iter().zip(&proof.trace_openings) {
+        let p = query.position;
+        if p >= half || query.layers.is_empty() {
+            return false;
+        }
+        let expected = [p, p + half];
+        if opening.rows.len() != expected.len() {
+            return false;
+        }
+        for (row, &index) in opening.rows.iter().zip(expected.iter()) {
+            if row.index != index || row.values.len() != air.width() || row.path.leaf_index != index {
+                return false;
+            }
+            if !crate::merkle::verify(
+                &proof.trace_root,
+                &hash_row(&row.values[..base_width]),
+                &row.path,
+            ) {
+                return false;
+            }
+            if has_aux {
+                if row.aux_path.leaf_index != index {
+                    return false;
+                }
+                if !crate::merkle::verify(
+                    &proof.aux_root,
+                    &hash_row(&row.values[base_width..]),
+                    &row.aux_path,
+                ) {
+                    return false;
+                }
+            }
+            let mut acc = Fp3::ZERO;
+            let mut power = Fp3::ONE;
+            for value in &row.values {
+                acc = acc.add(power.mul(Fp3::from_base(*value)));
+                power = power.mul(trace_challenge);
+            }
+            let claimed = if index == p {
+                query.layers[0].eval
+            } else {
+                query.layers[0].sibling
+            };
+            if acc != claimed {
+                return false;
+            }
+        }
+    }
+
     true
 }
 
@@ -454,12 +576,34 @@ mod tests {
         (air, trace)
     }
 
+    fn prove_lifted(air: &Air, trace: &TraceTable, params: &StarkParams, lift: bool) -> StarkProof {
+        let domain = Domain::new(air, params);
+        let mut base_lde = column_extensions(trace, &domain);
+        if lift {
+            let vanishing = domain.vanishing_over_coset();
+            for (cell, z) in base_lde[0].iter_mut().zip(vanishing.iter()) {
+                *cell = cell.add(*z);
+            }
+        }
+        prove_columns(air, trace, &domain, base_lde, params, &[])
+    }
+
     #[test]
     fn a_correct_trace_proves_and_verifies() {
         let (air, trace) = squaring(16, Felt::new(3));
         assert!(air.is_satisfied(&trace));
         let proof = prove(&air, &trace, &params());
         assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn an_over_degree_trace_column_is_rejected() {
+        let (air, trace) = squaring(16, Felt::new(3));
+        assert!(verify(&air, &params(), &prove_lifted(&air, &trace, &params(), false)));
+        let forged = prove_lifted(&air, &trace, &params(), true);
+        let final_layer = &forged.trace_fri.final_layer;
+        assert!(final_layer.iter().any(|value| *value != final_layer[0]));
+        assert!(!verify(&air, &params(), &forged));
     }
 
     #[test]
