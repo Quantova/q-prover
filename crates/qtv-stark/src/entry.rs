@@ -18,6 +18,8 @@ pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 
 pub const MAX_CERT_ROWS: usize = 1 << 24;
 
+pub const MAX_CERT_SEGMENTS: usize = 1 << 12;
+
 fn params() -> StarkParams {
     StarkParams {
         lde_blowup: CERT_BLOWUP,
@@ -76,7 +78,7 @@ pub fn prove_batch(message: &[u8], context: &[u8], segments: usize, responses: &
 }
 
 pub fn verify_batch(message: &[u8], context: &[u8], cert: &BatchProof) -> bool {
-    if message.len() > MAX_MESSAGE_BYTES || cert.segments == 0 {
+    if message.len() > MAX_MESSAGE_BYTES || cert.segments == 0 || cert.segments > MAX_CERT_SEGMENTS {
         return false;
     }
     match cert.segments.checked_mul(SEGMENT_ROWS) {
@@ -206,6 +208,18 @@ mod tests {
             segments: usize::MAX,
             proof: vec![0u8; 8],
         };
+        assert!(!verify_batch(message, CTX, &cert));
+    }
+
+    #[test]
+    fn a_segment_count_above_the_cap_is_refused_before_the_air_is_built() {
+        let message = b"crafted certificate above the segment cap";
+        let cert = BatchProof {
+            segments: 1 << 13,
+            proof: vec![0u8; 8],
+        };
+        assert!((1usize << 13) > MAX_CERT_SEGMENTS);
+        assert!(((1usize << 13) * SEGMENT_ROWS).is_power_of_two());
         assert!(!verify_batch(message, CTX, &cert));
     }
 }
