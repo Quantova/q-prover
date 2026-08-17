@@ -81,14 +81,6 @@ impl Domain {
         }
     }
 
-    fn trace_fri_params(&self, num_queries: usize) -> FriParams {
-        FriParams {
-            log_domain_size: self.log_size,
-            num_queries,
-            blowup: self.lde_blowup,
-        }
-    }
-
     fn last_point(&self) -> Felt {
         self.omega_h.pow((self.n - 1) as u64)
     }
@@ -206,7 +198,8 @@ pub fn prove_with_domain(
     let domain = Domain::new(air, params);
 
     let base_lde = column_extensions(trace, &domain);
-    prove_columns(air, trace, &domain, base_lde, params, context)
+    let trace_fri_blowup = domain.lde_blowup;
+    prove_columns(air, trace, &domain, base_lde, params.num_queries, context, trace_fri_blowup)
 }
 
 fn prove_columns(
@@ -214,8 +207,9 @@ fn prove_columns(
     trace: &TraceTable,
     domain: &Domain,
     base_lde: Vec<Vec<Felt>>,
-    params: &StarkParams,
+    num_queries: usize,
     context: &[u8],
+    trace_fri_blowup: usize,
 ) -> StarkProof {
     let base_tree = commit_rows(&base_lde, domain.size);
     let trace_root = base_tree.root();
@@ -261,11 +255,12 @@ fn prove_columns(
         }
         power = power.mul(trace_challenge);
     }
-    let trace_fri = fri::prove_with_domain(
-        &trace_combo,
-        &domain.trace_fri_params(params.num_queries),
-        &mut transcript,
-    );
+    let trace_fri_params = FriParams {
+        log_domain_size: domain.log_size,
+        num_queries,
+        blowup: trace_fri_blowup,
+    };
+    let trace_fri = fri::prove_with_domain(&trace_combo, &trace_fri_params, &mut transcript);
 
     let last_point = domain.last_point();
     let boundary_points = domain.boundary_points(air);
@@ -312,7 +307,7 @@ fn prove_columns(
         point = point.mul(domain.omega_n);
     }
 
-    let fri_proof = fri::prove_with_domain(&composition, &domain.fri_params(params.num_queries), &mut transcript);
+    let fri_proof = fri::prove_with_domain(&composition, &domain.fri_params(num_queries), &mut transcript);
 
     let half = domain.size / 2;
     let mut openings = Vec::with_capacity(fri_proof.queries.len());
@@ -388,6 +383,18 @@ pub fn verify_with_domain(
     context: &[u8],
 ) -> bool {
     let domain = Domain::new(air, params);
+    let trace_fri_blowup = domain.lde_blowup;
+    verify_inner(air, &domain, trace_fri_blowup, params.num_queries, proof, context)
+}
+
+fn verify_inner(
+    air: &Air,
+    domain: &Domain,
+    trace_fri_blowup: usize,
+    num_queries: usize,
+    proof: &StarkProof,
+    context: &[u8],
+) -> bool {
     let base_width = air.base_width();
     let has_aux = air.aux_width() > 0;
     let mut transcript = Transcript::with_domain(context);
@@ -405,15 +412,16 @@ pub fn verify_with_domain(
         .collect();
 
     let trace_challenge = transcript.challenge_ext();
-    if !fri::verify_with_domain(
-        &domain.trace_fri_params(params.num_queries),
-        &proof.trace_fri,
-        &mut transcript,
-    ) {
+    let trace_fri_params = FriParams {
+        log_domain_size: domain.log_size,
+        num_queries,
+        blowup: trace_fri_blowup,
+    };
+    if !fri::verify_with_domain(&trace_fri_params, &proof.trace_fri, &mut transcript) {
         return false;
     }
 
-    if !fri::verify_with_domain(&domain.fri_params(params.num_queries), &proof.fri, &mut transcript) {
+    if !fri::verify_with_domain(&domain.fri_params(num_queries), &proof.fri, &mut transcript) {
         return false;
     }
     if proof.openings.len() != proof.fri.queries.len() {
@@ -552,6 +560,119 @@ pub fn verify_with_domain(
     true
 }
 
+impl Domain {
+    fn new_blinded(air: &Air, lde_blowup: usize, blind: usize) -> (Self, usize) {
+        let n = air.length();
+        let log_n = n.trailing_zeros();
+        assert!(
+            lde_blowup.is_power_of_two() && lde_blowup >= 2,
+            "blow up must be a power of two of at least two"
+        );
+        let log_size = log_n + lde_blowup.trailing_zeros();
+        let size = 1usize << log_size;
+        let trace_bound = (n + blind).next_power_of_two();
+        let comp_bound = (air.max_degree() * (n + blind)).next_power_of_two();
+        let trace_fri_blowup = size / trace_bound;
+        let comp_fri_blowup = size / comp_bound;
+        assert!(
+            trace_fri_blowup >= 2 && trace_fri_blowup.is_power_of_two(),
+            "trace blow up too small for the blinding margin"
+        );
+        assert!(
+            comp_fri_blowup >= 2 && comp_fri_blowup.is_power_of_two(),
+            "composition blow up too small for the blinding margin"
+        );
+        let domain = Domain {
+            n,
+            size,
+            log_size,
+            lde_blowup,
+            fri_blowup: comp_fri_blowup,
+            omega_n: root_of_unity(log_size),
+            omega_h: root_of_unity(log_n),
+            shift: Felt::new(GENERATOR),
+        };
+        (domain, trace_fri_blowup)
+    }
+}
+
+fn blinding_values(seed: &[u8], column: usize, blind: usize) -> Vec<Felt> {
+    if blind == 0 {
+        return Vec::new();
+    }
+    let mut input = Vec::with_capacity(seed.len() + 8);
+    input.extend_from_slice(seed);
+    input.extend_from_slice(&(column as u64).to_le_bytes());
+    let mut bytes = vec![0u8; blind * 8];
+    qtv_crypto::sha3::shake256(&input, &mut bytes);
+    (0..blind)
+        .map(|k| {
+            let mut word = [0u8; 8];
+            word.copy_from_slice(&bytes[k * 8..k * 8 + 8]);
+            Felt::new(u64::from_le_bytes(word))
+        })
+        .collect()
+}
+
+fn blinded_columns(
+    table: &TraceTable,
+    domain: &Domain,
+    blind: usize,
+    seed: &[u8],
+    column_offset: usize,
+) -> Vec<Vec<Felt>> {
+    let n = table.length();
+    let mut out = Vec::with_capacity(table.width());
+    for column in 0..table.width() {
+        let mut coeffs = poly::interpolate(table.column(column));
+        coeffs.resize(n + blind, Felt::ZERO);
+        let r = blinding_values(seed, column_offset + column, blind);
+        for (k, rk) in r.iter().enumerate() {
+            coeffs[k] = coeffs[k].sub(*rk);
+            coeffs[n + k] = coeffs[n + k].add(*rk);
+        }
+        out.push(poly::evaluate_coset(&coeffs, domain.log_size, domain.shift));
+    }
+    out
+}
+
+pub struct ZkParams {
+    pub lde_blowup: usize,
+    pub num_queries: usize,
+    pub blind: usize,
+}
+
+pub fn prove_zk(
+    air: &Air,
+    trace: &TraceTable,
+    params: &ZkParams,
+    context: &[u8],
+    seed: &[u8],
+) -> StarkProof {
+    assert_eq!(trace.width(), air.base_width(), "trace width mismatch");
+    assert_eq!(trace.length(), air.length(), "trace length mismatch");
+    assert_eq!(air.aux_width(), 0, "the blinded path does not carry aux columns");
+    let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
+    let base_lde = blinded_columns(trace, &domain, params.blind, seed, 0);
+    prove_columns(
+        air,
+        trace,
+        &domain,
+        base_lde,
+        params.num_queries,
+        context,
+        trace_fri_blowup,
+    )
+}
+
+pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8]) -> bool {
+    if air.aux_width() != 0 {
+        return false;
+    }
+    let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
+    verify_inner(air, &domain, trace_fri_blowup, params.num_queries, proof, context)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,7 +706,7 @@ mod tests {
                 *cell = cell.add(*z);
             }
         }
-        prove_columns(air, trace, &domain, base_lde, params, &[])
+        prove_columns(air, trace, &domain, base_lde, params.num_queries, &[], domain.lde_blowup)
     }
 
     #[test]
