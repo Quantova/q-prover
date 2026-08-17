@@ -115,10 +115,6 @@ fn boundary_inverses(point: Felt, boundary_points: &[Felt]) -> Vec<Felt> {
     poly::batch_inverse(&denominators)
 }
 
-// The random linear combination of constraint quotients. Weights and the
-// permutation challenges live in the extension; the trace, boundary and
-// vanishing terms stay in the base field and are lifted into the extension
-// only when combined, so the composition column is an extension codeword.
 fn composition_value(
     air: &Air,
     weights: &[Fp3],
@@ -152,7 +148,6 @@ fn composition_value(
         let den = (permutation.den_factor)(current, challenges);
         let p_current = permutation.running_product(current);
         let p_next = permutation.running_product(next);
-        // Wrap constraint over the whole trace domain: den*P_next - num*P_cur.
         let value = den.mul(p_next).sub(num.mul(p_current));
         acc = acc.add(weights[index].mul(value.scale(vanishing_inv)));
         index += 1;
@@ -775,8 +770,6 @@ mod tests {
     fn a_tampered_extension_composition_value_is_rejected() {
         let (air, trace) = squaring(16, Felt::new(3));
         let mut proof = prove(&air, &trace, &params());
-        // The composition codeword now lives in the cubic extension; perturb a
-        // single opened extension value and confirm the verifier rejects.
         let eval = proof.fri.queries[0].layers[0].eval;
         proof.fri.queries[0].layers[0].eval = eval.add(Fp3::ONE);
         assert!(!verify(&air, &params(), &proof));
