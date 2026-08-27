@@ -12,7 +12,7 @@ use crate::stark::{prove_with_domain, verify_with_domain, StarkParams};
 
 pub const CERT_BLOWUP: usize = 128;
 
-pub const CERT_QUERIES: usize = 43;
+pub const CERT_QUERIES: usize = 86;
 
 pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 
@@ -123,6 +123,7 @@ impl BatchProof {
 mod tests {
     use super::*;
 
+
     const CTX: &[u8] = b"chain-1/corridor-3/nonce-42";
 
     #[test]
@@ -221,5 +222,19 @@ mod tests {
         assert!((1usize << 13) > MAX_CERT_SEGMENTS);
         assert!(((1usize << 13) * SEGMENT_ROWS).is_power_of_two());
         assert!(!verify_batch(message, CTX, &cert));
+    }
+
+    #[test]
+    fn the_certificate_parameters_meet_the_target_soundness() {
+        let segments = 2;
+        let message = b"soundness parameter probe over a cert";
+        let output = shake_output(SHAKE256_RATE, segments, message);
+        let air = certificate_air(segments, message, &output);
+        let n = air.length();
+        let size = n * CERT_BLOWUP;
+        let comp_bound = air.max_degree().next_power_of_two() * n;
+        let comp_fri_blowup = size / comp_bound;
+        let bits = CERT_QUERIES as f64 * 0.5 * (comp_fri_blowup as f64).log2();
+        assert!(bits >= 128.0, "certificate composition soundness {bits} bits below target");
     }
 }
