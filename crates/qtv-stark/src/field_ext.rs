@@ -192,9 +192,12 @@ impl crate::fri::FriField for Fp3 {
         transcript.absorb_ext(self);
     }
     fn hash_leaf(self) -> crate::merkle::Digest {
-        let mut preimage = [0u8; 24];
+        // Tag the extension field leaf with the same leaf domain byte the base field uses, so an
+        // Fp3 leaf can never collide with an internal node or an untagged preimage.
+        let mut preimage = [0u8; 25];
+        preimage[0] = crate::merkle::LEAF_DOMAIN;
         for (i, limb) in self.to_u64s().iter().enumerate() {
-            preimage[i * 8..i * 8 + 8].copy_from_slice(&limb.to_le_bytes());
+            preimage[1 + i * 8..1 + i * 8 + 8].copy_from_slice(&limb.to_le_bytes());
         }
         qtv_crypto::sha3::sha3_256(&preimage)
     }

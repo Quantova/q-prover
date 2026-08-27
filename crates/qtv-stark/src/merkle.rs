@@ -10,7 +10,7 @@ pub type Digest = [u8; 32];
 // Leaves and internal nodes carry distinct domain tags so a leaf hash can never be reinterpreted
 // as an internal node. Without this a row that serialises to the same length as an internal node
 // preimage could be presented at the wrong position, the classic merkle second preimage.
-const LEAF_DOMAIN: u8 = 0x00;
+pub const LEAF_DOMAIN: u8 = 0x00;
 const NODE_DOMAIN: u8 = 0x01;
 
 pub fn hash_leaf(value: Felt) -> Digest {
