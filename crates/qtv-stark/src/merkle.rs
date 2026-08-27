@@ -7,12 +7,22 @@ use qtv_crypto::sha3::sha3_256;
 
 pub type Digest = [u8; 32];
 
+// Leaves and internal nodes carry distinct domain tags so a leaf hash can never be reinterpreted
+// as an internal node. Without this a row that serialises to the same length as an internal node
+// preimage could be presented at the wrong position, the classic merkle second preimage.
+const LEAF_DOMAIN: u8 = 0x00;
+const NODE_DOMAIN: u8 = 0x01;
+
 pub fn hash_leaf(value: Felt) -> Digest {
-    sha3_256(&value.to_u64().to_le_bytes())
+    let mut preimage = [0u8; 9];
+    preimage[0] = LEAF_DOMAIN;
+    preimage[1..].copy_from_slice(&value.to_u64().to_le_bytes());
+    sha3_256(&preimage)
 }
 
 pub fn hash_row(values: &[Felt]) -> Digest {
-    let mut preimage = Vec::with_capacity(values.len() * 8);
+    let mut preimage = Vec::with_capacity(1 + values.len() * 8);
+    preimage.push(LEAF_DOMAIN);
     for value in values {
         preimage.extend_from_slice(&value.to_u64().to_le_bytes());
     }
@@ -103,9 +113,10 @@ pub fn verify(root: &Digest, leaf: &Digest, proof: &MerkleProof) -> bool {
 }
 
 fn hash_pair(left: &Digest, right: &Digest) -> Digest {
-    let mut preimage = [0u8; 64];
-    preimage[..32].copy_from_slice(left);
-    preimage[32..].copy_from_slice(right);
+    let mut preimage = [0u8; 65];
+    preimage[0] = NODE_DOMAIN;
+    preimage[1..33].copy_from_slice(left);
+    preimage[33..].copy_from_slice(right);
     sha3_256(&preimage)
 }
 

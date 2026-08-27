@@ -43,9 +43,11 @@ pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
 
     sponge::add_sponge_constraints(&mut air, SHAKE256_RATE, perms, message, output);
 
+    // Collect the squeeze rows once so the boundary pass is linear in the trace length rather
+    // than rebuilding an O(perms) scan for every row, which was quadratic in the segment count.
+    let hot_rows: std::collections::HashSet<usize> = (0..perms).map(squeeze_row).collect();
     for global in 0..rows {
-        let hot = (0..perms).any(|j| squeeze_row(j) == global);
-        let value = if hot { Felt::ONE } else { Felt::ZERO };
+        let value = if hot_rows.contains(&global) { Felt::ONE } else { Felt::ZERO };
         air.add_boundary(SQ_COL, global, value);
     }
 
