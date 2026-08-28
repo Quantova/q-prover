@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for the fused certificate over the hashing and the per coefficient
-
 use std::time::Instant;
 
 use qtv_stark::certificate::{certificate_air, certificate_trace, CERT_WIDTH};
@@ -43,8 +41,6 @@ fn main() {
     };
     let message = b"quantova fused certificate batch";
     let hints: Vec<u64> = (0..perms as u64).map(|i| i & 1).collect();
-    // In bound member responses, one per segment, standing in for the response
-    // coefficients decoded from the member signatures.
     let responses: Vec<u64> = (0..perms as u64)
         .map(|i| (i * 40_009 + 1) % 500_000)
         .collect();

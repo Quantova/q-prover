@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::{Q, RESIDUE_BITS};

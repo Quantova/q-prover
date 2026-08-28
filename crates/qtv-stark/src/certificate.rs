@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::lattice::{Q, RESIDUE_BITS};
@@ -246,9 +245,6 @@ mod tests {
     fn a_tampered_certificate_trace_is_rejected() {
         let cert = sample();
         let mut trace = cert.trace;
-        // Corrupt a committed reduction cell. The reduction constraint and the
-        // extension-field permutation binding both break, so a proof built over
-        // the tampered trace is rejected by the extension-field verifier.
         let row = squeeze_row(0);
         trace.set(R_R, row, trace.get(R_R, row).add(Felt::ONE));
         let proof = prove(&cert.air, &trace, &params());

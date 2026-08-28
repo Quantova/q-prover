@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::field::Felt;
 
 pub const NON_RESIDUE: u64 = 2;
@@ -70,7 +69,6 @@ impl Fp3 {
         }
     }
 
-    // Schoolbook multiply in Fp[X]/(X^3 - NON_RESIDUE): X^3 = c, X^4 = c*X.
     pub fn mul(self, other: Fp3) -> Fp3 {
         let c = Felt::new(NON_RESIDUE);
         let [a0, a1, a2] = self.limbs;
@@ -88,7 +86,6 @@ impl Fp3 {
         Fp3 { limbs: [r0, r1, r2] }
     }
 
-    // Multiply an extension element by a base-field scalar.
     pub fn scale(self, scalar: Felt) -> Fp3 {
         Fp3 {
             limbs: [
@@ -115,8 +112,6 @@ impl Fp3 {
         Fp3::ZERO.sub(self)
     }
 
-    // Field norm N(a) = a * a^p * a^{p^2} in the base field. For X^3 = c it is
-    // a0^3 + c*a1^3 + c^2*a2^3 - 3*c*a0*a1*a2.
     fn norm(self) -> Felt {
         let c = Felt::new(NON_RESIDUE);
         let [a0, a1, a2] = self.limbs;
@@ -131,7 +126,6 @@ impl Fp3 {
             .sub(three_c.mul(cross))
     }
 
-    // Adjugate row: a * adj(a) = N(a) as a base-field scalar.
     fn adjugate(self) -> Fp3 {
         let c = Felt::new(NON_RESIDUE);
         let [a0, a1, a2] = self.limbs;
@@ -213,7 +207,6 @@ mod tests {
     use crate::field::MODULUS;
 
     fn sample(seed: u64) -> Fp3 {
-        // A deterministic pseudo-random element for property tests.
         let a = seed.wrapping_mul(2654435761).wrapping_add(1);
         let b = seed.wrapping_mul(40503).wrapping_add(7);
         let d = seed.wrapping_mul(2246822519).wrapping_add(13);
@@ -222,8 +215,6 @@ mod tests {
 
     #[test]
     fn reduction_polynomial_is_irreducible() {
-        // X^3 - c is irreducible over Goldilocks iff c is a non-cube,
-        // i.e. c^((p-1)/3) != 1.
         let c = Felt::new(NON_RESIDUE);
         let e = (MODULUS - 1) / 3;
         assert_ne!(c.pow(e), Felt::ONE);
@@ -271,7 +262,6 @@ mod tests {
             let y = Felt::new(raw.wrapping_mul(3).wrapping_add(9));
             let ex = Fp3::from_base(x);
             let ey = Fp3::from_base(y);
-            // The embedding is a ring homomorphism.
             assert_eq!(ex.add(ey), Fp3::from_base(x.add(y)));
             assert_eq!(ex.mul(ey), Fp3::from_base(x.mul(y)));
             assert!(ex.is_base());
@@ -289,7 +279,6 @@ mod tests {
 
     #[test]
     fn a_non_base_element_generates_the_full_extension() {
-        // X (the generator) is not in the base field and X^3 = c.
         let x = Fp3::new(Felt::ZERO, Felt::ONE, Felt::ZERO);
         assert!(!x.is_base());
         assert_eq!(x.mul(x).mul(x), Fp3::from_base(Felt::new(NON_RESIDUE)));

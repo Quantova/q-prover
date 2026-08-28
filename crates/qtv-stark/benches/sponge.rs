@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for a SHAKE squeeze over the arithmetized permutation.
-
 use std::time::Instant;
 
 use qtv_stark::sponge::{shake_air, shake_trace, SHAKE256_RATE};

@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use std::sync::Arc;
 
 use crate::field::Felt;
@@ -61,20 +60,14 @@ pub struct Boundary {
     pub value: Felt,
 }
 
-// A permutation factor reads base-field trace cells and the extension-field
-// challenges and returns an extension-field value. The running-product column
-// it drives therefore lives in the extension.
 type Factor = Arc<dyn Fn(&[Felt], &[Fp3]) -> Fp3 + Send + Sync>;
 
-// Each extension-field running-product column is stored as three base-field
-// limb columns, so the trace commitment stays over the base field.
 pub const AUX_LIMBS: usize = 3;
 
 pub struct Permutation {
     pub num_factor: Factor,
     pub den_factor: Factor,
     pub degree: usize,
-    // Base index of the first of this permutation's three aux limb columns.
     pub aux_base: usize,
 }
 
@@ -194,7 +187,6 @@ impl Air {
     {
         let aux_base = self.base_width + self.aux_width;
         self.aux_width += AUX_LIMBS;
-        // The running product starts at the extension one, stored limbwise.
         self.add_boundary(aux_base, 0, Felt::ONE);
         self.add_boundary(aux_base + 1, 0, Felt::ZERO);
         self.add_boundary(aux_base + 2, 0, Felt::ZERO);
@@ -464,7 +456,6 @@ mod tests {
         let challenges = [ext_challenge(173961102589770)];
         let aux = air.build_aux(&base, &challenges);
         assert_eq!(aux.len(), AUX_LIMBS);
-        // Limb layout of the extension one at row zero: (1, 0, 0).
         assert_eq!(aux[0][0], Felt::ONE);
         assert_eq!(aux[1][0], Felt::ZERO);
         assert_eq!(aux[2][0], Felt::ZERO);

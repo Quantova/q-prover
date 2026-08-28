@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 
@@ -46,7 +45,6 @@ pub fn round_constants(count: usize) -> Vec<u64> {
 pub fn qudros_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
     let mut s = *state;
 
-    // Theta.
     let mut c = [0u64; 5];
     for (x, cell) in c.iter_mut().enumerate() {
         *cell = s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20];
@@ -61,7 +59,6 @@ pub fn qudros_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
         }
     }
 
-    // Rho and pi.
     let mut b = [0u64; LANES];
     for x in 0..5 {
         for y in 0..5 {
@@ -70,14 +67,12 @@ pub fn qudros_round(state: &[u64; LANES], rc: u64) -> [u64; LANES] {
         }
     }
 
-    // Chi.
     for x in 0..5 {
         for y in 0..5 {
             s[x + 5 * y] = b[x + 5 * y] ^ ((!b[(x + 1) % 5 + 5 * y]) & b[(x + 2) % 5 + 5 * y]);
         }
     }
 
-    // Iota.
     s[0] ^= rc;
     s
 }

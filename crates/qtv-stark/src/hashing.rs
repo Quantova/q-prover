@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::lattice::{MATRIX_COLS, MATRIX_ROWS};
 use crate::sponge::{shake_trace, SpongeInstance, SHAKE128_RATE, SHAKE256_RATE};
 

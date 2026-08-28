@@ -1,15 +1,11 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::field::{root_of_unity, Felt, MODULUS};
 use crate::field_ext::Fp3;
 use crate::merkle::{Digest, MerkleProof, MerkleTree};
 use qtv_crypto::sha3::sha3_256;
 
-// A field the FRI layers can live in. Folding, the codeword values and the
-// folding challenges are drawn from this field; the evaluation-domain points
-// and query positions stay in the base field.
 pub trait FriField: Copy + PartialEq + core::fmt::Debug {
     const LIMBS: usize;
 
@@ -17,7 +13,6 @@ pub trait FriField: Copy + PartialEq + core::fmt::Debug {
     fn add(self, other: Self) -> Self;
     fn sub(self, other: Self) -> Self;
     fn mul(self, other: Self) -> Self;
-    // Multiply by a base-field scalar (domain points live in the base field).
     fn scale(self, scalar: Felt) -> Self;
     fn from_base(value: Felt) -> Self;
 
@@ -167,8 +162,6 @@ impl Transcript {
         Felt::new((wide % (MODULUS as u128)) as u64)
     }
 
-    // Sample a uniform element of the cubic extension by drawing three
-    // independent base-field limbs from the transcript.
     pub fn challenge_ext(&mut self) -> Fp3 {
         let a0 = self.challenge_felt();
         let a1 = self.challenge_felt();
@@ -427,7 +420,6 @@ mod tests {
         out
     }
 
-    // Extension-field low-degree extension of a polynomial with Fp3 coefficients.
     fn eval_poly_ext(coeffs: &[Fp3], point: Felt) -> Fp3 {
         let mut acc = Fp3::ZERO;
         for coeff in coeffs.iter().rev() {
@@ -508,7 +500,6 @@ mod tests {
         let x = a.challenge_ext();
         let y = b.challenge_ext();
         assert_eq!(x, y);
-        // A transcript draw should exercise the whole extension, not just the base.
         assert!(!x.is_base());
         let z = a.challenge_ext();
         assert_ne!(x, z);
@@ -586,7 +577,6 @@ mod tests {
         assert!(!verify(&params, &proof));
     }
 
-    // The same FRI protocol run over the cubic extension field.
     #[test]
     fn an_extension_low_degree_vector_is_accepted() {
         let params = sample_params();
@@ -653,8 +643,6 @@ mod tests {
 
     #[test]
     fn an_extension_folding_challenge_lives_in_the_extension() {
-        // Sanity check that the FRI folding challenge for the Fp3 instance is
-        // a genuine extension element (not accidentally reduced to the base).
         let mut transcript = Transcript::new();
         transcript.absorb_digest(&[9u8; 32]);
         let challenge = <Fp3 as FriField>::sample(&mut transcript);

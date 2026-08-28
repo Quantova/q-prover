@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for one Qudros f permutation, the core of SHA3 and SHAKE.
-
 use std::time::Instant;
 
 use qtv_stark::qudros::{qudros_air, qudros_trace, LANES};

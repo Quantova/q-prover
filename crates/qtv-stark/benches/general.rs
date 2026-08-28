@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for the general proof over the worked example.
-
 use std::time::Instant;
 
 use qtv_stark::examples::squaring_chain;

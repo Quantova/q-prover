@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::field::{root_of_unity, Felt};
 use crate::field_ext::Fp3;
 
@@ -109,8 +108,6 @@ pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
     out
 }
 
-// Batch inverse over the cubic extension, mirroring batch_inverse and folding
-// all inversions into a single extension inverse.
 pub fn batch_inverse_ext(values: &[Fp3]) -> Vec<Fp3> {
     let n = values.len();
     let mut prefix = vec![Fp3::ONE; n];

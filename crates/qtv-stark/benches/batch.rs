@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for the joined batch certificate of the module lattice verify
-
 use std::time::Instant;
 
 use qtv_stark::batch::{batch_air, batch_trace, BATCH_WIDTH};

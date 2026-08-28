@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use crate::air::{Air, TraceTable};
 use crate::lattice::{Q, RING_DEGREE};
 use crate::{challenge_ball, decompose, encode, lattice, norm, ntt, sponge};

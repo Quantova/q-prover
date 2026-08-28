@@ -1,7 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-
 use qtv_crypto::sha3::shake256;
 
 use crate::certificate::{certificate_air, certificate_trace};
@@ -122,7 +121,6 @@ impl BatchProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     const CTX: &[u8] = b"chain-1/corridor-3/nonce-42";
 

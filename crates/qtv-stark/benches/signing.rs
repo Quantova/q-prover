@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for the FIPS 204 signing derivation with a zero randomizer.
-
 use std::time::Instant;
 
 use qtv_stark::merkle::MerkleProof;
@@ -34,7 +32,6 @@ fn proof_bytes(proof: &StarkProof) -> usize {
     total
 }
 
-// One measured piece, its cost and the multiplicities that place it in the loop.
 struct Measured {
     name: &'static str,
     rows: usize,
@@ -52,9 +49,6 @@ fn measure(job: &Job) -> Measured {
         num_queries: job.queries,
     };
 
-    // The hashing pieces carry the degree eleven qudros transition and are the
-    // heaviest, so they are proved once; the lighter arithmetic pieces are averaged
-    // over a few runs.
     let heavy = job.blowup >= 32 || job.rows >= 8192;
     let prove_iters = if heavy { 1 } else { 3 };
     let verify_iters = if heavy { 5 } else { 20 };
@@ -114,7 +108,6 @@ fn main() {
         measured.push(m);
     }
 
-    // The accepted iteration, the sum of each piece times its per iteration count.
     let iter_prove: f64 = measured
         .iter()
         .map(|m| m.prove_secs * m.per_iteration as f64)
@@ -128,7 +121,6 @@ fn main() {
         .map(|m| m.bytes as f64 * m.per_iteration as f64)
         .sum();
 
-    // The per draw pieces run once outside the loop, the seed derivation.
     let draw_once_prove: f64 = measured
         .iter()
         .map(|m| m.prove_secs * m.per_draw as f64)
@@ -145,10 +137,6 @@ fn main() {
     let avg_iterations = AVG_ITERATIONS_MILLI as f64 / 1000.0;
     let rejected = avg_iterations - 1.0;
 
-    // The full derandomization proof for one draw, the seed derivation once plus
-    // the average number of full iterations, since a rejected iteration performs
-    // the same computation as the accepted one and its rejection must also be
-    // proved.
     let draw_prove = draw_once_prove + iter_prove * avg_iterations;
     let draw_verify = draw_once_verify + iter_verify * avg_iterations;
     let draw_bytes = draw_once_bytes + iter_bytes * avg_iterations;

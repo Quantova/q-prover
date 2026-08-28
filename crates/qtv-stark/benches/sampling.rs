@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for the arithmetized sampling steps of the batch verify relation.
-
 use std::time::Instant;
 
 use qtv_crypto::sha3::{shake128, shake256};

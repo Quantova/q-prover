@@ -1,8 +1,6 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-//! Benchmark for the arithmetized part of the batch verify relation.
-
 use std::time::Instant;
 
 use qtv_stark::decompose::decompose_batch;
@@ -95,13 +93,10 @@ fn main() {
         num_queries: 32,
     };
 
-    // The transform domain modular multiplications of the matrix vector product.
     let modmul_work = signature_batch_workload(signatures, 24301);
     let modmul = modmul_batch(&modmul_work);
     let modmul_len = modmul.trace.length();
 
-    // The response coefficients for the infinity norm check, one ring per matrix
-    // column and signature.
     let mut state = 41394u64 | 1;
     let norm_count = signatures * MATRIX_COLS * RING_DEGREE;
     let norm_work: Vec<u64> = (0..norm_count)
@@ -117,8 +112,6 @@ fn main() {
     let norm = norm_batch(&norm_work);
     let norm_len = norm.trace.length();
 
-    // The commitment coefficients for the decomposition and the hint recovery,
-    // one ring per matrix row and signature.
     let hint_count = signatures * MATRIX_ROWS * RING_DEGREE;
     let dec_work: Vec<u64> = (0..hint_count).map(|_| draw(&mut state)).collect();
     let decompose = decompose_batch(&dec_work);
