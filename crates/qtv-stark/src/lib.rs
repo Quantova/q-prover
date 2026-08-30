@@ -1,6 +1,14 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::assertions_on_constants)]
+
 pub mod air;
 pub mod batch;
 pub mod certificate;
