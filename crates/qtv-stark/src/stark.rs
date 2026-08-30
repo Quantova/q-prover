@@ -193,7 +193,15 @@ pub fn prove_with_domain(
 
     let base_lde = column_extensions(trace, &domain);
     let trace_fri_blowup = domain.lde_blowup;
-    prove_columns(air, trace, &domain, base_lde, params.num_queries, context, trace_fri_blowup)
+    prove_columns(
+        air,
+        trace,
+        &domain,
+        base_lde,
+        params.num_queries,
+        context,
+        trace_fri_blowup,
+    )
 }
 
 fn prove_columns(
@@ -301,7 +309,11 @@ fn prove_columns(
         point = point.mul(domain.omega_n);
     }
 
-    let fri_proof = fri::prove_with_domain(&composition, &domain.fri_params(num_queries), &mut transcript);
+    let fri_proof = fri::prove_with_domain(
+        &composition,
+        &domain.fri_params(num_queries),
+        &mut transcript,
+    );
 
     let half = domain.size / 2;
     let mut openings = Vec::with_capacity(fri_proof.queries.len());
@@ -378,7 +390,14 @@ pub fn verify_with_domain(
 ) -> bool {
     let domain = Domain::new(air, params);
     let trace_fri_blowup = domain.lde_blowup;
-    verify_inner(air, &domain, trace_fri_blowup, params.num_queries, proof, context)
+    verify_inner(
+        air,
+        &domain,
+        trace_fri_blowup,
+        params.num_queries,
+        proof,
+        context,
+    )
 }
 
 fn verify_inner(
@@ -512,7 +531,8 @@ fn verify_inner(
             return false;
         }
         for (row, &index) in opening.rows.iter().zip(expected.iter()) {
-            if row.index != index || row.values.len() != air.width() || row.path.leaf_index != index {
+            if row.index != index || row.values.len() != air.width() || row.path.leaf_index != index
+            {
                 return false;
             }
             if !crate::merkle::verify(
@@ -645,7 +665,11 @@ pub fn prove_zk(
 ) -> StarkProof {
     assert_eq!(trace.width(), air.base_width(), "trace width mismatch");
     assert_eq!(trace.length(), air.length(), "trace length mismatch");
-    assert_eq!(air.aux_width(), 0, "the blinded path does not carry aux columns");
+    assert_eq!(
+        air.aux_width(),
+        0,
+        "the blinded path does not carry aux columns"
+    );
     let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
     let base_lde = blinded_columns(trace, &domain, params.blind, seed, 0);
     prove_columns(
@@ -664,7 +688,14 @@ pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8
         return false;
     }
     let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
-    verify_inner(air, &domain, trace_fri_blowup, params.num_queries, proof, context)
+    verify_inner(
+        air,
+        &domain,
+        trace_fri_blowup,
+        params.num_queries,
+        proof,
+        context,
+    )
 }
 
 #[cfg(test)]
@@ -700,7 +731,15 @@ mod tests {
                 *cell = cell.add(*z);
             }
         }
-        prove_columns(air, trace, &domain, base_lde, params.num_queries, &[], domain.lde_blowup)
+        prove_columns(
+            air,
+            trace,
+            &domain,
+            base_lde,
+            params.num_queries,
+            &[],
+            domain.lde_blowup,
+        )
     }
 
     #[test]
@@ -714,7 +753,11 @@ mod tests {
     #[test]
     fn an_over_degree_trace_column_is_rejected() {
         let (air, trace) = squaring(16, Felt::new(3));
-        assert!(verify(&air, &params(), &prove_lifted(&air, &trace, &params(), false)));
+        assert!(verify(
+            &air,
+            &params(),
+            &prove_lifted(&air, &trace, &params(), false)
+        ));
         let forged = prove_lifted(&air, &trace, &params(), true);
         let final_layer = &forged.trace_fri.final_layer;
         assert!(final_layer.iter().any(|value| *value != final_layer[0]));

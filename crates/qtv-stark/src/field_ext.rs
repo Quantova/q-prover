@@ -83,7 +83,9 @@ impl Fp3 {
         let r0 = t0.add(c.mul(t3));
         let r1 = t1.add(c.mul(t4));
         let r2 = t2;
-        Fp3 { limbs: [r0, r1, r2] }
+        Fp3 {
+            limbs: [r0, r1, r2],
+        }
     }
 
     pub fn scale(self, scalar: Felt) -> Fp3 {
@@ -132,7 +134,9 @@ impl Fp3 {
         let b0 = a0.mul(a0).sub(c.mul(a1).mul(a2));
         let b1 = c.mul(a2).mul(a2).sub(a0.mul(a1));
         let b2 = a1.mul(a1).sub(a0.mul(a2));
-        Fp3 { limbs: [b0, b1, b2] }
+        Fp3 {
+            limbs: [b0, b1, b2],
+        }
     }
 
     pub fn inv(self) -> Fp3 {

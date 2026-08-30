@@ -635,10 +635,26 @@ mod tests {
         let params = sample_params();
         let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
         let evals = eval_domain(&coeffs, params.log_domain_size);
-        let proof = prove_with_domain(&evals, &params, &mut Transcript::with_domain(b"chain-a/corridor-x"));
-        assert!(verify_with_domain(&params, &proof, &mut Transcript::with_domain(b"chain-a/corridor-x")));
-        assert!(!verify_with_domain(&params, &proof, &mut Transcript::with_domain(b"chain-b/corridor-x")));
-        assert!(!verify_with_domain(&params, &proof, &mut Transcript::with_domain(b"chain-a/corridor-y")));
+        let proof = prove_with_domain(
+            &evals,
+            &params,
+            &mut Transcript::with_domain(b"chain-a/corridor-x"),
+        );
+        assert!(verify_with_domain(
+            &params,
+            &proof,
+            &mut Transcript::with_domain(b"chain-a/corridor-x")
+        ));
+        assert!(!verify_with_domain(
+            &params,
+            &proof,
+            &mut Transcript::with_domain(b"chain-b/corridor-x")
+        ));
+        assert!(!verify_with_domain(
+            &params,
+            &proof,
+            &mut Transcript::with_domain(b"chain-a/corridor-y")
+        ));
     }
 
     #[test]

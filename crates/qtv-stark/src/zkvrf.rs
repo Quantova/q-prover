@@ -201,11 +201,20 @@ pub struct VrfInstance {
     pub commit: [Felt; OUT_ELEMS],
 }
 
-fn fill_segment(trace: &mut TraceTable, base_row: usize, input: &[Felt; WIDTH], rc: &[[Felt; WIDTH]]) {
+fn fill_segment(
+    trace: &mut TraceTable,
+    base_row: usize,
+    input: &[Felt; WIDTH],
+    rc: &[[Felt; WIDTH]],
+) {
     let states = rescue::permute_states(input);
     for r in 0..SEG {
         let global = base_row + r;
-        let state = if r <= ROUNDS { &states[r] } else { &states[ROUNDS] };
+        let state = if r <= ROUNDS {
+            &states[r]
+        } else {
+            &states[ROUNDS]
+        };
         for (col, value) in state.iter().enumerate() {
             trace.set(col, global, *value);
         }
@@ -232,7 +241,12 @@ pub fn vrf_trace(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS]) -> VrfInstance {
 
     let mut trace = TraceTable::new(BASE_WIDTH, ROWS);
     fill_segment(&mut trace, 0, &state_input(sk, x), &rc);
-    fill_segment(&mut trace, SEG, &state_input(sk, &[Felt::ZERO; X_ELEMS]), &rc);
+    fill_segment(
+        &mut trace,
+        SEG,
+        &state_input(sk, &[Felt::ZERO; X_ELEMS]),
+        &rc,
+    );
 
     for global in 0..ROWS {
         let insel = if global == 0 || global == SEG {
@@ -345,7 +359,12 @@ mod tests {
         let mut other = sk();
         other[0] = other[0].add(Felt::ONE);
         let rc = rescue::round_constants();
-        fill_segment(&mut instance.trace, SEG, &state_input(&other, &[Felt::ZERO; X_ELEMS]), &rc);
+        fill_segment(
+            &mut instance.trace,
+            SEG,
+            &state_input(&other, &[Felt::ZERO; X_ELEMS]),
+            &rc,
+        );
         assert!(!instance.air.is_satisfied(&instance.trace));
     }
 
@@ -360,7 +379,13 @@ mod tests {
     #[test]
     fn a_blinded_draw_proves_and_verifies() {
         let instance = vrf_trace(&sk(), &input());
-        let proof = prove_zk(&instance.air, &instance.trace, &params(), b"vrf", &[1u8; 32]);
+        let proof = prove_zk(
+            &instance.air,
+            &instance.trace,
+            &params(),
+            b"vrf",
+            &[1u8; 32],
+        );
         let air = vrf_air(&input(), &instance.output, &instance.commit);
         assert!(verify_zk(&air, &params(), &proof, b"vrf"));
     }
@@ -368,7 +393,13 @@ mod tests {
     #[test]
     fn a_blinded_forged_output_is_rejected() {
         let instance = vrf_trace(&sk(), &input());
-        let proof = prove_zk(&instance.air, &instance.trace, &params(), b"vrf", &[2u8; 32]);
+        let proof = prove_zk(
+            &instance.air,
+            &instance.trace,
+            &params(),
+            b"vrf",
+            &[2u8; 32],
+        );
         let mut wrong = instance.output;
         wrong[1] = wrong[1].add(Felt::ONE);
         let air = vrf_air(&input(), &wrong, &instance.commit);
@@ -378,8 +409,20 @@ mod tests {
     #[test]
     fn blinding_randomizes_the_commitment_across_seeds() {
         let instance = vrf_trace(&sk(), &input());
-        let a = prove_zk(&instance.air, &instance.trace, &params(), b"vrf", &[3u8; 32]);
-        let b = prove_zk(&instance.air, &instance.trace, &params(), b"vrf", &[4u8; 32]);
+        let a = prove_zk(
+            &instance.air,
+            &instance.trace,
+            &params(),
+            b"vrf",
+            &[3u8; 32],
+        );
+        let b = prove_zk(
+            &instance.air,
+            &instance.trace,
+            &params(),
+            b"vrf",
+            &[4u8; 32],
+        );
         assert_ne!(a.trace_root, b.trace_root);
         let air = vrf_air(&input(), &instance.output, &instance.commit);
         assert!(verify_zk(&air, &params(), &a, b"vrf"));
@@ -389,7 +432,13 @@ mod tests {
     #[test]
     fn the_blinding_margin_covers_every_opening() {
         let instance = vrf_trace(&sk(), &input());
-        let proof = prove_zk(&instance.air, &instance.trace, &params(), b"vrf", &[5u8; 32]);
+        let proof = prove_zk(
+            &instance.air,
+            &instance.trace,
+            &params(),
+            b"vrf",
+            &[5u8; 32],
+        );
         let mut positions = HashSet::new();
         for q in &proof.openings {
             for r in &q.rows {
@@ -417,7 +466,10 @@ mod tests {
         let comp_bound = (max_degree * (n + VRF_BLIND)).next_power_of_two();
         let comp_fri_blowup = size / comp_bound;
         let bits = VRF_QUERIES as f64 * 0.5 * (comp_fri_blowup as f64).log2();
-        assert!(bits >= 128.0, "composition soundness {bits} bits below target");
+        assert!(
+            bits >= 128.0,
+            "composition soundness {bits} bits below target"
+        );
         let openings = 6 * VRF_QUERIES;
         assert!(
             VRF_BLIND >= openings,
@@ -428,8 +480,20 @@ mod tests {
     #[test]
     fn the_byte_api_round_trips_and_binds_context() {
         let draw = super::prove(&sk(), &input(), b"chain/slot-7");
-        assert!(super::verify(&input(), &draw.output, &draw.commit, &draw.proof, b"chain/slot-7"));
-        assert!(!super::verify(&input(), &draw.output, &draw.commit, &draw.proof, b"chain/slot-8"));
+        assert!(super::verify(
+            &input(),
+            &draw.output,
+            &draw.commit,
+            &draw.proof,
+            b"chain/slot-7"
+        ));
+        assert!(!super::verify(
+            &input(),
+            &draw.output,
+            &draw.commit,
+            &draw.proof,
+            b"chain/slot-8"
+        ));
     }
 
     #[test]
@@ -438,7 +502,13 @@ mod tests {
         let mut bad = draw.proof.clone();
         let mid = bad.len() / 2;
         bad[mid] ^= 1;
-        assert!(!super::verify(&input(), &draw.output, &draw.commit, &bad, b"vrf"));
+        assert!(!super::verify(
+            &input(),
+            &draw.output,
+            &draw.commit,
+            &bad,
+            b"vrf"
+        ));
     }
 
     #[test]
@@ -446,7 +516,13 @@ mod tests {
         let draw = super::prove(&sk(), &input(), b"vrf");
         let mut wrong = draw.output;
         wrong[0] = wrong[0].add(Felt::ONE);
-        assert!(!super::verify(&input(), &wrong, &draw.commit, &draw.proof, b"vrf"));
+        assert!(!super::verify(
+            &input(),
+            &wrong,
+            &draw.commit,
+            &draw.proof,
+            b"vrf"
+        ));
     }
 
     #[test]

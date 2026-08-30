@@ -252,7 +252,12 @@ impl Air {
 
     pub fn max_degree(&self) -> usize {
         let transition_degree = self.transitions.iter().map(|t| t.degree).max().unwrap_or(1);
-        let permutation_degree = self.permutations.iter().map(|p| p.degree).max().unwrap_or(1);
+        let permutation_degree = self
+            .permutations
+            .iter()
+            .map(|p| p.degree)
+            .max()
+            .unwrap_or(1);
         transition_degree.max(permutation_degree).max(1)
     }
 
@@ -411,7 +416,11 @@ mod tests {
     }
 
     fn ext_challenge(raw: u64) -> Fp3 {
-        Fp3::new(Felt::new(raw), Felt::new(raw ^ 0x5555), Felt::new(raw ^ 0xa33f))
+        Fp3::new(
+            Felt::new(raw),
+            Felt::new(raw ^ 0x5555),
+            Felt::new(raw ^ 0xa33f),
+        )
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::air::{Air, TraceTable};
 use crate::field::Felt;
 use crate::qudros::{
     add_block_constraints, fill_block_row, qudros_f1600, qudros_states, round_bit, round_constants,
-    s_idx, HALF_OFF, QUDROS_ROUNDS, QUDROS_TRACE_ROWS, QUDROS_WIDTH, LANES, LANE_BITS, RCHALF_OFF,
+    s_idx, HALF_OFF, LANES, LANE_BITS, QUDROS_ROUNDS, QUDROS_TRACE_ROWS, QUDROS_WIDTH, RCHALF_OFF,
 };
 
 pub const SHAKE128_RATE: usize = 168;

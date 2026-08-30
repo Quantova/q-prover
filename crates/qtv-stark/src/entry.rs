@@ -54,7 +54,12 @@ pub struct BatchProof {
     pub proof: Vec<u8>,
 }
 
-pub fn prove_batch(message: &[u8], context: &[u8], segments: usize, responses: &[u64]) -> BatchProof {
+pub fn prove_batch(
+    message: &[u8],
+    context: &[u8],
+    segments: usize,
+    responses: &[u64],
+) -> BatchProof {
     assert!(
         message.len() <= MAX_MESSAGE_BYTES,
         "message must fit one SHAKE256 rate block"
@@ -77,7 +82,8 @@ pub fn prove_batch(message: &[u8], context: &[u8], segments: usize, responses: &
 }
 
 pub fn verify_batch(message: &[u8], context: &[u8], cert: &BatchProof) -> bool {
-    if message.len() > MAX_MESSAGE_BYTES || cert.segments == 0 || cert.segments > MAX_CERT_SEGMENTS {
+    if message.len() > MAX_MESSAGE_BYTES || cert.segments == 0 || cert.segments > MAX_CERT_SEGMENTS
+    {
         return false;
     }
     match cert.segments.checked_mul(SEGMENT_ROWS) {
@@ -145,7 +151,11 @@ mod tests {
     #[test]
     fn a_certificate_over_a_different_message_is_rejected() {
         let cert = prove_batch(b"the message it was proven over", CTX, 2, &[]);
-        assert!(!verify_batch(b"a different message entirely!!!!", CTX, &cert));
+        assert!(!verify_batch(
+            b"a different message entirely!!!!",
+            CTX,
+            &cert
+        ));
     }
 
     #[test]
@@ -233,6 +243,9 @@ mod tests {
         let comp_bound = air.max_degree().next_power_of_two() * n;
         let comp_fri_blowup = size / comp_bound;
         let bits = CERT_QUERIES as f64 * 0.5 * (comp_fri_blowup as f64).log2();
-        assert!(bits >= 128.0, "certificate composition soundness {bits} bits below target");
+        assert!(
+            bits >= 128.0,
+            "certificate composition soundness {bits} bits below target"
+        );
     }
 }

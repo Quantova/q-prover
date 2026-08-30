@@ -44,7 +44,11 @@ pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
 
     let hot_rows: std::collections::HashSet<usize> = (0..perms).map(squeeze_row).collect();
     for global in 0..rows {
-        let value = if hot_rows.contains(&global) { Felt::ONE } else { Felt::ZERO };
+        let value = if hot_rows.contains(&global) {
+            Felt::ONE
+        } else {
+            Felt::ZERO
+        };
         air.add_boundary(SQ_COL, global, value);
     }
 

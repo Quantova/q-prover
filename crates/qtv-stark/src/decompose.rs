@@ -208,9 +208,7 @@ mod tests {
 
     #[test]
     fn a_batch_proves_and_verifies() {
-        let coeffs: Vec<u64> = (0..60u64)
-            .map(|i| i.wrapping_mul(2654435769) % Q)
-            .collect();
+        let coeffs: Vec<u64> = (0..60u64).map(|i| i.wrapping_mul(2654435769) % Q).collect();
         let batch = decompose_batch(&coeffs);
         let proof = prove(&batch.air, &batch.trace, &params());
         assert!(verify(

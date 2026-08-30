@@ -345,7 +345,10 @@ mod tests {
     #[test]
     fn the_whole_relation_holds_under_challenges() {
         let instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
-        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
+        let challenges = [
+            Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)),
+            Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131)),
+        ];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
     }
 
@@ -361,7 +364,10 @@ mod tests {
     #[test]
     fn a_broken_wire_is_rejected() {
         let mut instance = ntt_trace(&to_layer_zero(&sample_coeffs(16)));
-        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
+        let challenges = [
+            Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)),
+            Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131)),
+        ];
         assert!(instance.air.is_satisfied_with(&instance.trace, &challenges));
         let s = instance.trace.get(S, 1);
         let d = instance.trace.get(D, 1);
@@ -436,7 +442,10 @@ mod tests {
     fn a_forged_twiddle_producing_a_false_output_is_rejected() {
         let coeffs = sample_coeffs(16);
         let instance = ntt_trace(&to_layer_zero(&coeffs));
-        let challenges = [Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)), Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131))];
+        let challenges = [
+            Fp3::new(Felt::new(305419896), Felt::new(11), Felt::new(97)),
+            Fp3::new(Felt::new(2596069104), Felt::new(23), Felt::new(131)),
+        ];
         let n = 16usize;
         let layers = (n as u32).trailing_zeros();
         let last = layers as usize - 1;

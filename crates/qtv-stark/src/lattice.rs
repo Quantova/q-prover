@@ -69,7 +69,9 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_S_BITS).sub(modulus_minus_one.sub(row[r]))
     });
 
-    air.add_single_row(1, move |row| recompose(row, base + COL_QUO_BITS).sub(row[quo]));
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_QUO_BITS).sub(row[quo])
+    });
 
     for k in 0..RESIDUE_BITS {
         let col = base + COL_R_BITS + k;
