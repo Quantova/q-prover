@@ -1,0 +1,10 @@
+# Copyright 2026 Quantova Inc
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  ci:
+    uses: Quantova/Quantova-Ci/.github/workflows/rust-ci.yml@2b5ad1b2400acd435df40e7f26943ef737b477d8
