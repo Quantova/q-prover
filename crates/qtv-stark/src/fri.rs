@@ -74,7 +74,8 @@ impl FriParams {
     }
 
     pub fn rounds(&self) -> usize {
-        (self.log_domain_size - self.blowup.trailing_zeros()) as usize
+        self.log_domain_size
+            .saturating_sub(self.blowup.trailing_zeros()) as usize
     }
 
     pub fn degree_bound(&self) -> usize {

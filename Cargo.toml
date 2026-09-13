@@ -4,3 +4,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/qtv-stark"]
+
+[profile.release]
+overflow-checks = true
