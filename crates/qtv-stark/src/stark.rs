@@ -464,10 +464,11 @@ fn verify_inner(
             {
                 return false;
             }
-            if !crate::merkle::verify(
+            if !crate::merkle::verify_with_leaves(
                 &proof.trace_root,
                 &hash_row(&row.values[..base_width]),
                 &row.path,
+                domain.size,
             ) {
                 return false;
             }
@@ -475,10 +476,11 @@ fn verify_inner(
                 if row.aux_path.leaf_index != index {
                     return false;
                 }
-                if !crate::merkle::verify(
+                if !crate::merkle::verify_with_leaves(
                     &proof.aux_root,
                     &hash_row(&row.values[base_width..]),
                     &row.aux_path,
+                    domain.size,
                 ) {
                     return false;
                 }
@@ -535,10 +537,11 @@ fn verify_inner(
             {
                 return false;
             }
-            if !crate::merkle::verify(
+            if !crate::merkle::verify_with_leaves(
                 &proof.trace_root,
                 &hash_row(&row.values[..base_width]),
                 &row.path,
+                domain.size,
             ) {
                 return false;
             }
@@ -546,10 +549,11 @@ fn verify_inner(
                 if row.aux_path.leaf_index != index {
                     return false;
                 }
-                if !crate::merkle::verify(
+                if !crate::merkle::verify_with_leaves(
                     &proof.aux_root,
                     &hash_row(&row.values[base_width..]),
                     &row.aux_path,
+                    domain.size,
                 ) {
                     return false;
                 }

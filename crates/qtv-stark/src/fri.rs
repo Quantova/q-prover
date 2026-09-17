@@ -358,17 +358,19 @@ pub fn verify_with_domain<F: FriField>(
             {
                 return false;
             }
-            if !crate::merkle::verify(
+            if !crate::merkle::verify_with_leaves(
                 &proof.layer_roots[round],
                 &layer.eval.hash_leaf(),
                 &layer.eval_path,
+                2 * half,
             ) {
                 return false;
             }
-            if !crate::merkle::verify(
+            if !crate::merkle::verify_with_leaves(
                 &proof.layer_roots[round],
                 &layer.sibling.hash_leaf(),
                 &layer.sibling_path,
+                2 * half,
             ) {
                 return false;
             }

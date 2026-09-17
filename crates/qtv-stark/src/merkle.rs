@@ -91,6 +91,36 @@ impl MerkleTree {
 
 pub const MAX_MERKLE_DEPTH: usize = 64;
 
+// The depth a commitment over `leaves` leaf digests was built at. MerkleTree::commit
+// halves with div_ceil until one node remains, so this is ceil(log2(leaves)).
+pub fn depth_for(leaves: usize) -> usize {
+    let mut depth = 0usize;
+    let mut remaining = leaves;
+    while remaining > 1 {
+        remaining = remaining.div_ceil(2);
+        depth += 1;
+    }
+    depth
+}
+
+// The caller states how many leaves the commitment covers. Without that bound a shortened
+// path reaches the root from an interior node, which is a second preimage on the
+// commitment. The leaf and node domain bytes make it unreachable for a caller that hashes
+// its own value, but the bound belongs in the verifier rather than in the discipline of
+// every call site.
+pub fn verify_with_leaves(
+    root: &Digest,
+    leaf: &Digest,
+    proof: &MerkleProof,
+    leaves: usize,
+) -> bool {
+    let depth = depth_for(leaves);
+    if proof.siblings.len() != depth || proof.leaf_index >= leaves.max(1) {
+        return false;
+    }
+    verify(root, leaf, proof)
+}
+
 pub fn verify(root: &Digest, leaf: &Digest, proof: &MerkleProof) -> bool {
     if proof.siblings.len() > MAX_MERKLE_DEPTH {
         return false;
@@ -237,5 +267,80 @@ mod domain_separation_tests {
                 "a field element hashed to an interior node digest"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod depth_bound_tests {
+    use super::*;
+
+    #[test]
+    fn the_depth_matches_what_commit_actually_builds() {
+        for n in 1..=64usize {
+            let leaves: Vec<Digest> = (0..n as u64).map(|i| hash_leaf(Felt::new(i))).collect();
+            let tree = MerkleTree::commit(&leaves);
+            let proof = tree.open(0);
+            assert_eq!(
+                depth_for(n),
+                proof.siblings.len(),
+                "depth_for disagrees with the tree commit builds at {n} leaves, so the bound \
+                 would reject honest proofs or admit shortened ones"
+            );
+        }
+    }
+
+    #[test]
+    fn an_interior_node_cannot_be_opened_as_a_leaf() {
+        let n = 8usize;
+        let leaves: Vec<Digest> = (0..n as u64).map(|i| hash_leaf(Felt::new(i))).collect();
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        let full = tree.open(0);
+
+        let interior = hash_pair(&leaves[0], &leaves[1]);
+        let shortened = MerkleProof {
+            leaf_index: 0,
+            siblings: full.siblings[1..].to_vec(),
+        };
+
+        assert!(
+            verify(&root, &interior, &shortened),
+            "without a leaf count the unbounded verifier does admit the interior node, which is \
+             the weakness the bound exists to close"
+        );
+        assert!(
+            !verify_with_leaves(&root, &interior, &shortened, n),
+            "the bounded verifier must refuse an interior node opened under a shortened path"
+        );
+    }
+
+    #[test]
+    fn an_honest_proof_still_verifies_under_the_bound() {
+        for n in [1usize, 2, 3, 5, 8, 17, 64] {
+            let leaves: Vec<Digest> = (0..n as u64).map(|i| hash_leaf(Felt::new(i))).collect();
+            let tree = MerkleTree::commit(&leaves);
+            let root = tree.root();
+            for index in 0..n {
+                let proof = tree.open(index);
+                assert!(
+                    verify_with_leaves(&root, &leaves[index], &proof, n),
+                    "an honest proof for leaf {index} of {n} was refused by the bound"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_index_past_the_leaf_count_is_refused() {
+        let n = 8usize;
+        let leaves: Vec<Digest> = (0..n as u64).map(|i| hash_leaf(Felt::new(i))).collect();
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        let mut proof = tree.open(3);
+        proof.leaf_index = n + 1;
+        assert!(
+            !verify_with_leaves(&root, &leaves[3], &proof, n),
+            "an index outside the committed range must be refused"
+        );
     }
 }
