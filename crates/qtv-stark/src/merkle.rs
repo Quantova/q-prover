@@ -174,3 +174,68 @@ mod tests {
         assert!(!verify(&root, &leaves[6], &proof));
     }
 }
+
+#[cfg(test)]
+mod domain_separation_tests {
+    use super::*;
+
+    // verify() bounds the sibling count but does not pin it to the depth the commitment
+    // was built at, so a shortened path reaches the root from an interior node. What keeps
+    // that unreachable is the domain byte: a leaf and an internal node are hashed under
+    // different prefixes, and every caller in this crate hashes the value itself rather
+    // than taking a digest off the proof, so producing the interior digest as a leaf needs
+    // a preimage. These pin both halves of that argument.
+    #[test]
+    fn a_leaf_and_an_internal_node_never_share_a_digest() {
+        let a = hash_leaf(Felt::new(1));
+        let b = hash_leaf(Felt::new(2));
+        assert_ne!(
+            hash_pair(&a, &b),
+            hash_row(&[Felt::new(1), Felt::new(2)]),
+            "an internal node and a row leaf collided, which would let an interior node be \
+             opened as if it were committed data"
+        );
+    }
+
+    #[test]
+    fn the_leaf_and_node_prefixes_are_distinct() {
+        assert_ne!(
+            LEAF_DOMAIN, NODE_DOMAIN,
+            "the domain bytes are what separate a leaf from a node, they must differ"
+        );
+    }
+
+    #[test]
+    fn a_shortened_path_does_not_verify_for_a_real_leaf() {
+        let leaves: Vec<Digest> = (0..8u64).map(|i| hash_leaf(Felt::new(i))).collect();
+        let tree = MerkleTree::commit(&leaves);
+        let root = tree.root();
+        let full = tree.open(3);
+
+        for cut in 1..full.siblings.len() {
+            let shortened = MerkleProof {
+                leaf_index: 3,
+                siblings: full.siblings[..cut].to_vec(),
+            };
+            assert!(
+                !verify(&root, &leaves[3], &shortened),
+                "a path truncated to {cut} siblings still verified a real leaf against the root"
+            );
+        }
+    }
+
+    #[test]
+    fn an_interior_digest_is_not_reachable_as_a_hashed_value() {
+        // The callers never hand verify() a digest taken from the proof, they hash a field
+        // element. So the interior node would have to be the hash_leaf of some value.
+        let leaves: Vec<Digest> = (0..8u64).map(|i| hash_leaf(Felt::new(i))).collect();
+        let interior = hash_pair(&leaves[0], &leaves[1]);
+        for i in 0..1_000u64 {
+            assert_ne!(
+                hash_leaf(Felt::new(i)),
+                interior,
+                "a field element hashed to an interior node digest"
+            );
+        }
+    }
+}
