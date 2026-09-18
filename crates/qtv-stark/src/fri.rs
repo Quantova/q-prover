@@ -668,3 +668,75 @@ mod tests {
         assert!(!challenge.is_base());
     }
 }
+
+#[cfg(test)]
+mod fold_width_tests {
+    use super::*;
+
+    // Both the prover and the verifier compute `half = half_domain >> round` and then
+    // divide by it. That is only safe because the round count stops exactly where the
+    // folding does: at the last round half equals blowup, which the verifier has already
+    // checked is a power of two and therefore at least one. A change to rounds() that
+    // widened the range by even one would turn every FRI verification into a division by
+    // zero panic, which is a remote crash on anything that verifies a proof.
+    #[test]
+    fn the_fold_width_never_reaches_zero_for_any_admissible_parameters() {
+        for log_domain_size in 1u32..=24 {
+            for blowup_log in 0u32..log_domain_size {
+                let blowup = 1usize << blowup_log;
+                let params = FriParams {
+                    log_domain_size,
+                    num_queries: 1,
+                    blowup,
+                };
+                let half_domain = params.domain_size() / 2;
+                let rounds = params.rounds();
+                for round in 0..rounds {
+                    let half = half_domain >> round;
+                    assert!(
+                        half > 0,
+                        "fold width hit zero at round {round} of {rounds} for domain 2^{log_domain_size} blowup {blowup}, which divides by zero"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_last_fold_width_is_exactly_the_blowup() {
+        for log_domain_size in 2u32..=20 {
+            for blowup_log in 0u32..log_domain_size {
+                let blowup = 1usize << blowup_log;
+                let params = FriParams {
+                    log_domain_size,
+                    num_queries: 1,
+                    blowup,
+                };
+                let rounds = params.rounds();
+                if rounds == 0 {
+                    continue;
+                }
+                let last = (params.domain_size() / 2) >> (rounds - 1);
+                assert_eq!(
+                    last, blowup,
+                    "the folding stopped somewhere other than the blowup, so the relationship \
+                     the zero check relies on no longer holds"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_zero_blowup_is_refused_before_any_division() {
+        let params = FriParams {
+            log_domain_size: 8,
+            num_queries: 1,
+            blowup: 0,
+        };
+        assert!(
+            !params.blowup.is_power_of_two(),
+            "a zero blowup must fail the power of two check, it is the guard that keeps the \
+             fold width above zero"
+        );
+    }
+}
