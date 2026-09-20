@@ -417,6 +417,21 @@ fn verify_inner(
         .collect();
     if has_aux {
         transcript.absorb_digest(&proof.aux_root);
+    } else {
+        // Unread fields must still be pinned, or a proof carries free bytes and is
+        // malleable into a second encoding the verifier accepts for the same statement.
+        if proof.aux_root != [0u8; 32] {
+            return false;
+        }
+        let aux_padded = proof
+            .openings
+            .iter()
+            .chain(proof.trace_openings.iter())
+            .flat_map(|opening| opening.rows.iter())
+            .any(|row| !row.aux_path.siblings.is_empty() || row.aux_path.leaf_index != row.index);
+        if aux_padded {
+            return false;
+        }
     }
     let num_constraints =
         air.transitions().len() + air.boundaries().len() + air.permutations().len();

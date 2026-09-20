@@ -435,6 +435,31 @@ mod tests {
         assert_eq!(mask.per_iteration, MATRIX_L);
     }
 
+    // These jobs size a component for timing, not for a deployable proof. Pin that here
+    // so a figure taken off them is never read as a production soundness level.
+    pub const SIGNING_JOB_MAX_SOUNDNESS_BITS: f64 = 32.0;
+
+    #[test]
+    fn the_signing_jobs_are_benchmark_parameters_not_deployable_ones() {
+        for job in signing_jobs() {
+            let n = job.prover.length();
+            let size = n * job.blowup;
+            let bound = job.prover.max_degree().next_power_of_two() * n;
+            let fri_blowup = size / bound;
+            let bits = job.queries as f64 * 0.5 * (fri_blowup as f64).log2();
+            assert!(
+                bits <= SIGNING_JOB_MAX_SOUNDNESS_BITS,
+                "{} claims {bits} bits, so it is no longer a benchmark parameter set",
+                job.name
+            );
+            assert!(
+                bits < 128.0,
+                "{} reaches the deployable target, move it out of the bench set",
+                job.name
+            );
+        }
+    }
+
     #[test]
     fn a_representative_job_proves_and_verifies() {
         let job = sample_in_ball_job();
