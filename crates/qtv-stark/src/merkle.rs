@@ -91,8 +91,7 @@ impl MerkleTree {
 
 pub const MAX_MERKLE_DEPTH: usize = 64;
 
-// The depth a commitment over `leaves` leaf digests was built at. MerkleTree::commit
-// halves with div_ceil until one node remains, so this is ceil(log2(leaves)).
+// The depth commit builds at, ceil(log2(leaves)).
 pub fn depth_for(leaves: usize) -> usize {
     let mut depth = 0usize;
     let mut remaining = leaves;
@@ -103,11 +102,7 @@ pub fn depth_for(leaves: usize) -> usize {
     depth
 }
 
-// The caller states how many leaves the commitment covers. Without that bound a shortened
-// path reaches the root from an interior node, which is a second preimage on the
-// commitment. The leaf and node domain bytes make it unreachable for a caller that hashes
-// its own value, but the bound belongs in the verifier rather than in the discipline of
-// every call site.
+// Bound the path to the depth the commitment was built at.
 pub fn verify_with_leaves(
     root: &Digest,
     leaf: &Digest,
@@ -209,12 +204,7 @@ mod tests {
 mod domain_separation_tests {
     use super::*;
 
-    // verify() bounds the sibling count but does not pin it to the depth the commitment
-    // was built at, so a shortened path reaches the root from an interior node. What keeps
-    // that unreachable is the domain byte: a leaf and an internal node are hashed under
-    // different prefixes, and every caller in this crate hashes the value itself rather
-    // than taking a digest off the proof, so producing the interior digest as a leaf needs
-    // a preimage. These pin both halves of that argument.
+    // Domain bytes and caller side hashing are what separate a leaf from a node.
     #[test]
     fn a_leaf_and_an_internal_node_never_share_a_digest() {
         let a = hash_leaf(Felt::new(1));

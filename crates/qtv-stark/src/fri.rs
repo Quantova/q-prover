@@ -673,12 +673,7 @@ mod tests {
 mod fold_width_tests {
     use super::*;
 
-    // Both the prover and the verifier compute `half = half_domain >> round` and then
-    // divide by it. That is only safe because the round count stops exactly where the
-    // folding does: at the last round half equals blowup, which the verifier has already
-    // checked is a power of two and therefore at least one. A change to rounds() that
-    // widened the range by even one would turn every FRI verification into a division by
-    // zero panic, which is a remote crash on anything that verifies a proof.
+    // The fold width is divided by, so it must never reach zero.
     #[test]
     fn the_fold_width_never_reaches_zero_for_any_admissible_parameters() {
         for log_domain_size in 1u32..=24 {
