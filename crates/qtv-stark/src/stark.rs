@@ -433,6 +433,23 @@ fn verify_inner(
             return false;
         }
     }
+    // Shape before work. The draw below is one challenge per constraint, and for a batch
+    // the constraint count follows a caller chosen segment count, so a proof that cannot
+    // be well formed must be refused before it buys that.
+    let trace_fri_params = FriParams {
+        log_domain_size: domain.log_size,
+        num_queries,
+        blowup: trace_fri_blowup,
+    };
+    let fri_params = domain.fri_params(num_queries);
+    if !fri::shape_is_admissible(&trace_fri_params, &proof.trace_fri)
+        || !fri::shape_is_admissible(&fri_params, &proof.fri)
+        || proof.openings.len() != proof.fri.queries.len()
+        || proof.trace_openings.len() != proof.trace_fri.queries.len()
+    {
+        return false;
+    }
+
     let num_constraints =
         air.transitions().len() + air.boundaries().len() + air.permutations().len();
     let weights: Vec<Fp3> = (0..num_constraints)
@@ -440,19 +457,11 @@ fn verify_inner(
         .collect();
 
     let trace_challenge = transcript.challenge_ext();
-    let trace_fri_params = FriParams {
-        log_domain_size: domain.log_size,
-        num_queries,
-        blowup: trace_fri_blowup,
-    };
     if !fri::verify_with_domain(&trace_fri_params, &proof.trace_fri, &mut transcript) {
         return false;
     }
 
-    if !fri::verify_with_domain(&domain.fri_params(num_queries), &proof.fri, &mut transcript) {
-        return false;
-    }
-    if proof.openings.len() != proof.fri.queries.len() {
+    if !fri::verify_with_domain(&fri_params, &proof.fri, &mut transcript) {
         return false;
     }
 

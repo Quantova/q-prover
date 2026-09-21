@@ -223,6 +223,32 @@ pub fn shape_is_admissible<F: FriField>(params: &FriParams, proof: &FriProof<F>)
         && proof.queries.len() == expected_queries
 }
 
+#[cfg(test)]
+mod shape_guard_tests {
+    use super::*;
+
+    // The guard exists so a malformed proof is refused before the verifier pays for
+    // challenge draws that scale with the statement. It was once defined and never
+    // called, which is the same as not having it, so this pins the behaviour.
+    #[test]
+    fn an_empty_proof_is_refused_by_shape_alone() {
+        let params = FriParams {
+            log_domain_size: 10,
+            num_queries: 24,
+            blowup: 8,
+        };
+        let empty: FriProof<Felt> = FriProof {
+            layer_roots: Vec::new(),
+            final_layer: Vec::new(),
+            queries: Vec::new(),
+        };
+        assert!(
+            !shape_is_admissible(&params, &empty),
+            "an empty proof must be refused on shape, before any challenge draw"
+        );
+    }
+}
+
 // Distinct query positions. Drawn with replacement, a repeat buys the verifier nothing,
 // so a proof with collisions is checked at fewer places than the query count claims and
 // the soundness figure derived from that count is an overstatement. Prover and verifier
