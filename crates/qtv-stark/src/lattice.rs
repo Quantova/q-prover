@@ -37,8 +37,15 @@ const COL_QUO: usize = 3;
 const COL_R_BITS: usize = 4;
 const COL_S_BITS: usize = COL_R_BITS + RESIDUE_BITS;
 const COL_QUO_BITS: usize = COL_S_BITS + RESIDUE_BITS;
+// Both operands are range checked too. Without these a prover picks an a or a b outside
+// the field, satisfies a*b = quo*Q + r over the whole field, and proves a product that is
+// not the modular product.
+const COL_A_BITS: usize = COL_QUO_BITS + RESIDUE_BITS;
+const COL_A_SLACK: usize = COL_A_BITS + RESIDUE_BITS;
+const COL_B_BITS: usize = COL_A_SLACK + RESIDUE_BITS;
+const COL_B_SLACK: usize = COL_B_BITS + RESIDUE_BITS;
 
-pub const WIDTH: usize = COL_QUO_BITS + RESIDUE_BITS;
+pub const WIDTH: usize = COL_B_SLACK + RESIDUE_BITS;
 
 fn recompose(row: &[Felt], base: usize) -> Felt {
     let two = Felt::new(2);
@@ -73,6 +80,15 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         recompose(row, base + COL_QUO_BITS).sub(row[quo])
     });
 
+    air.add_single_row(1, move |row| recompose(row, base + COL_A_BITS).sub(row[a]));
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_A_SLACK).sub(modulus_minus_one.sub(row[a]))
+    });
+    air.add_single_row(1, move |row| recompose(row, base + COL_B_BITS).sub(row[b]));
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_B_SLACK).sub(modulus_minus_one.sub(row[b]))
+    });
+
     for k in 0..RESIDUE_BITS {
         let col = base + COL_R_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
@@ -84,6 +100,12 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     for k in 0..RESIDUE_BITS {
         let col = base + COL_QUO_BITS + k;
         air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+    }
+    for start in [COL_A_BITS, COL_A_SLACK, COL_B_BITS, COL_B_SLACK] {
+        for k in 0..RESIDUE_BITS {
+            let col = base + start + k;
+            air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
+        }
     }
 }
 
@@ -103,10 +125,16 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, a: u64, b: u64)
     trace.set(base + COL_B, row, Felt::new(b));
     trace.set(base + COL_R, row, Felt::new(residue));
     trace.set(base + COL_QUO, row, Felt::new(quotient));
+    let a_slack = Q - 1 - a;
+    let b_slack = Q - 1 - b;
     for k in 0..RESIDUE_BITS {
         trace.set(base + COL_R_BITS + k, row, Felt::new((residue >> k) & 1));
         trace.set(base + COL_S_BITS + k, row, Felt::new((slack >> k) & 1));
         trace.set(base + COL_QUO_BITS + k, row, Felt::new((quotient >> k) & 1));
+        trace.set(base + COL_A_BITS + k, row, Felt::new((a >> k) & 1));
+        trace.set(base + COL_A_SLACK + k, row, Felt::new((a_slack >> k) & 1));
+        trace.set(base + COL_B_BITS + k, row, Felt::new((b >> k) & 1));
+        trace.set(base + COL_B_SLACK + k, row, Felt::new((b_slack >> k) & 1));
     }
 }
 
@@ -157,6 +185,37 @@ mod tests {
             assert!(r < Q);
         }
         assert!(batch.air.is_satisfied(&batch.trace));
+    }
+
+    #[test]
+    // An operand outside the field satisfies a*b = quo*Q + r over the whole field while
+    // being no modular product at all. The operand range checks are what refuse it.
+    #[test]
+    fn an_operand_outside_the_field_is_refused() {
+        let length = 2usize;
+        let air = modmul_air(length);
+        let mut trace = TraceTable::new(WIDTH, length);
+        for row in 0..length {
+            fill_row(&mut trace, 0, row, 3, 5);
+        }
+        assert!(air.is_satisfied(&trace), "the honest trace holds");
+
+        // a = Q + 3 with the quotient raised to match: (Q+3)*5 - 5*Q - 15 == 0, and the
+        // residue and quotient decompositions both still hold. Only a bound on a refuses
+        // it, and without one the proof claims 15 is (Q+3)*5 mod Q.
+        let mut forged = TraceTable::new(WIDTH, length);
+        for row in 0..length {
+            fill_row(&mut forged, 0, row, 3, 5);
+        }
+        forged.set(COL_A, 0, Felt::new(Q + 3));
+        forged.set(COL_QUO, 0, Felt::new(5));
+        for k in 0..RESIDUE_BITS {
+            forged.set(COL_QUO_BITS + k, 0, Felt::new((5u64 >> k) & 1));
+        }
+        assert!(
+            !air.is_satisfied(&forged),
+            "an operand at Q+3 was accepted, so the product proved is not the modular one"
+        );
     }
 
     #[test]

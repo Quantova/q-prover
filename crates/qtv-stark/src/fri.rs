@@ -209,6 +209,40 @@ fn commit_layer<F: FriField>(values: &[F]) -> MerkleTree {
     MerkleTree::commit(&leaves)
 }
 
+/// The cheap structural checks, so a caller can refuse a malformed proof before paying
+/// for challenge draws that scale with the statement.
+pub fn shape_is_admissible<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
+    if !params.blowup.is_power_of_two() {
+        return false;
+    }
+    let rounds = params.rounds();
+    let expected_queries = params.num_queries.min((params.domain_size() / 2).max(1));
+    rounds != 0
+        && proof.layer_roots.len() == rounds
+        && proof.final_layer.len() == params.blowup
+        && proof.queries.len() == expected_queries
+}
+
+// Distinct query positions. Drawn with replacement, a repeat buys the verifier nothing,
+// so a proof with collisions is checked at fewer places than the query count claims and
+// the soundness figure derived from that count is an overstatement. Prover and verifier
+// both call this, in the same order, so they stay in lockstep.
+fn draw_positions(
+    transcript: &mut Transcript,
+    half_domain: usize,
+    num_queries: usize,
+) -> Vec<usize> {
+    let wanted = num_queries.min(half_domain.max(1));
+    let mut positions: Vec<usize> = Vec::with_capacity(wanted);
+    while positions.len() < wanted {
+        let candidate = transcript.challenge_index(half_domain);
+        if !positions.contains(&candidate) {
+            positions.push(candidate);
+        }
+    }
+    positions
+}
+
 pub fn prove<F: FriField>(evaluations: &[F], params: &FriParams) -> FriProof<F> {
     let mut transcript = Transcript::with_domain(&[]);
     prove_with_domain(evaluations, params, &mut transcript)
@@ -263,9 +297,9 @@ pub fn prove_with_domain<F: FriField>(
     }
 
     let half_domain = n / 2;
-    let mut queries = Vec::with_capacity(params.num_queries);
-    for _ in 0..params.num_queries {
-        let position = transcript.challenge_index(half_domain);
+    let drawn = draw_positions(transcript, half_domain, params.num_queries);
+    let mut queries = Vec::with_capacity(drawn.len());
+    for position in drawn {
         let mut opened = Vec::with_capacity(rounds);
         for round in 0..rounds {
             let half = half_domain >> round;
@@ -306,10 +340,12 @@ pub fn verify_with_domain<F: FriField>(
         return false;
     }
     let rounds = params.rounds();
+    // Positions are deduped, so the count the prover can open is bounded by the domain.
+    let expected_queries = params.num_queries.min((n / 2).max(1));
     if rounds == 0
         || proof.layer_roots.len() != rounds
         || proof.final_layer.len() != params.blowup
-        || proof.queries.len() != params.num_queries
+        || proof.queries.len() != expected_queries
     {
         return false;
     }
@@ -333,10 +369,7 @@ pub fn verify_with_domain<F: FriField>(
     }
 
     let half_domain = n / 2;
-    let mut positions = Vec::with_capacity(params.num_queries);
-    for _ in 0..params.num_queries {
-        positions.push(transcript.challenge_index(half_domain));
-    }
+    let positions = draw_positions(transcript, half_domain, params.num_queries);
 
     let mut generator_inv = Vec::with_capacity(rounds);
     let mut current = root_of_unity(params.log_domain_size).inv();
