@@ -209,6 +209,13 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
     let omega = root_of_unity_q(n);
     for bf in &schedule(n, layers, omega) {
         air.add_boundary(W, bf.row, Felt::new(bf.twiddle));
+        air.add_boundary(A_ID, bf.row, Felt::new(identity(bf.step, bf.i0, n)));
+        air.add_boundary(B_ID, bf.row, Felt::new(identity(bf.step, bf.i1, n)));
+        air.add_boundary(S_ID, bf.row, Felt::new(identity(bf.step + 1, bf.i0, n)));
+        air.add_boundary(D_ID, bf.row, Felt::new(identity(bf.step + 1, bf.i1, n)));
+        // The routing labels are a function of the schedule, so they are public constants,
+        // not witness. Left free, a prover relabels them to feed a butterfly the wrong
+        // step outputs while every per row constraint and the permutation still close.
     }
 
     air.add_single_row(2, move |row| {
@@ -326,6 +333,35 @@ mod tests {
         (0..n as u64)
             .map(|i| i.wrapping_mul(2654435769).wrapping_add(7) % Q)
             .collect()
+    }
+
+    // The routing labels decide which step outputs a butterfly consumes. If they are
+    // witness rather than public, a prover reroutes the network, relabels to keep the
+    // permutation closed, and proves a transform that is not the transform.
+    #[test]
+    fn the_routing_labels_are_pinned_to_the_schedule() {
+        let n = 4;
+        let input = [11u64, 22, 33, 44];
+        let honest = naive_dft(&input);
+        let air = ntt_air(n, &input, &honest);
+        let layers = n.trailing_zeros();
+        let omega = root_of_unity_q(n);
+        for bf in &schedule(n, layers, omega) {
+            for (col, want) in [
+                (A_ID, identity(bf.step, bf.i0, n)),
+                (B_ID, identity(bf.step, bf.i1, n)),
+                (S_ID, identity(bf.step + 1, bf.i0, n)),
+                (D_ID, identity(bf.step + 1, bf.i1, n)),
+            ] {
+                assert!(
+                    air.boundaries()
+                        .iter()
+                        .any(|b| b.column == col && b.row == bf.row && b.value == Felt::new(want)),
+                    "row {} column {col} is not pinned to {want}, so the prover picks it",
+                    bf.row
+                );
+            }
+        }
     }
 
     #[test]
