@@ -91,7 +91,6 @@ impl MerkleTree {
 
 pub const MAX_MERKLE_DEPTH: usize = 64;
 
-// The depth commit builds at, ceil(log2(leaves)).
 pub fn depth_for(leaves: usize) -> usize {
     let mut depth = 0usize;
     let mut remaining = leaves;
@@ -102,7 +101,6 @@ pub fn depth_for(leaves: usize) -> usize {
     depth
 }
 
-// Bound the path to the depth the commitment was built at.
 pub fn verify_with_leaves(
     root: &Digest,
     leaf: &Digest,
@@ -204,7 +202,6 @@ mod tests {
 mod domain_separation_tests {
     use super::*;
 
-    // Domain bytes and caller side hashing are what separate a leaf from a node.
     #[test]
     fn a_leaf_and_an_internal_node_never_share_a_digest() {
         let a = hash_leaf(Felt::new(1));
@@ -246,8 +243,6 @@ mod domain_separation_tests {
 
     #[test]
     fn an_interior_digest_is_not_reachable_as_a_hashed_value() {
-        // The callers never hand verify() a digest taken from the proof, they hash a field
-        // element. So the interior node would have to be the hash_leaf of some value.
         let leaves: Vec<Digest> = (0..8u64).map(|i| hash_leaf(Felt::new(i))).collect();
         let interior = hash_pair(&leaves[0], &leaves[1]);
         for i in 0..1_000u64 {

@@ -37,9 +37,6 @@ const COL_QUO: usize = 3;
 const COL_R_BITS: usize = 4;
 const COL_S_BITS: usize = COL_R_BITS + RESIDUE_BITS;
 const COL_QUO_BITS: usize = COL_S_BITS + RESIDUE_BITS;
-// Both operands are range checked too. Without these a prover picks an a or a b outside
-// the field, satisfies a*b = quo*Q + r over the whole field, and proves a product that is
-// not the modular product.
 const COL_A_BITS: usize = COL_QUO_BITS + RESIDUE_BITS;
 const COL_A_SLACK: usize = COL_A_BITS + RESIDUE_BITS;
 const COL_B_BITS: usize = COL_A_SLACK + RESIDUE_BITS;
@@ -187,8 +184,6 @@ mod tests {
         assert!(batch.air.is_satisfied(&batch.trace));
     }
 
-    // An operand outside the field satisfies a*b = quo*Q + r over the whole field while
-    // being no modular product at all. The operand range checks are what refuse it.
     #[test]
     fn an_operand_outside_the_field_is_refused() {
         let length = 2usize;
@@ -199,9 +194,6 @@ mod tests {
         }
         assert!(air.is_satisfied(&trace), "the honest trace holds");
 
-        // a = Q + 3 with the quotient raised to match: (Q+3)*5 - 5*Q - 15 == 0, and the
-        // residue and quotient decompositions both still hold. Only a bound on a refuses
-        // it, and without one the proof claims 15 is (Q+3)*5 mod Q.
         let mut forged = TraceTable::new(WIDTH, length);
         for row in 0..length {
             fill_row(&mut forged, 0, row, 3, 5);

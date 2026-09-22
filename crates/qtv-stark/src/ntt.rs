@@ -213,9 +213,6 @@ pub fn ntt_air(n: usize, input: &[u64], output: &[u64]) -> Air {
         air.add_boundary(B_ID, bf.row, Felt::new(identity(bf.step, bf.i1, n)));
         air.add_boundary(S_ID, bf.row, Felt::new(identity(bf.step + 1, bf.i0, n)));
         air.add_boundary(D_ID, bf.row, Felt::new(identity(bf.step + 1, bf.i1, n)));
-        // The routing labels are a function of the schedule, so they are public constants,
-        // not witness. Left free, a prover relabels them to feed a butterfly the wrong
-        // step outputs while every per row constraint and the permutation still close.
     }
 
     air.add_single_row(2, move |row| {
@@ -335,9 +332,6 @@ mod tests {
             .collect()
     }
 
-    // The routing labels decide which step outputs a butterfly consumes. If they are
-    // witness rather than public, a prover reroutes the network, relabels to keep the
-    // permutation closed, and proves a transform that is not the transform.
     #[test]
     fn the_routing_labels_are_pinned_to_the_schedule() {
         let n = 4;

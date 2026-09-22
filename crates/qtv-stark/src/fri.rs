@@ -209,8 +209,6 @@ fn commit_layer<F: FriField>(values: &[F]) -> MerkleTree {
     MerkleTree::commit(&leaves)
 }
 
-/// The cheap structural checks, so a caller can refuse a malformed proof before paying
-/// for challenge draws that scale with the statement.
 pub fn shape_is_admissible<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
     if !params.blowup.is_power_of_two() {
         return false;
@@ -227,9 +225,6 @@ pub fn shape_is_admissible<F: FriField>(params: &FriParams, proof: &FriProof<F>)
 mod shape_guard_tests {
     use super::*;
 
-    // The guard exists so a malformed proof is refused before the verifier pays for
-    // challenge draws that scale with the statement. It was once defined and never
-    // called, which is the same as not having it, so this pins the behaviour.
     #[test]
     fn an_empty_proof_is_refused_by_shape_alone() {
         let params = FriParams {
@@ -249,10 +244,6 @@ mod shape_guard_tests {
     }
 }
 
-// Distinct query positions. Drawn with replacement, a repeat buys the verifier nothing,
-// so a proof with collisions is checked at fewer places than the query count claims and
-// the soundness figure derived from that count is an overstatement. Prover and verifier
-// both call this, in the same order, so they stay in lockstep.
 fn draw_positions(
     transcript: &mut Transcript,
     half_domain: usize,
@@ -366,7 +357,6 @@ pub fn verify_with_domain<F: FriField>(
         return false;
     }
     let rounds = params.rounds();
-    // Positions are deduped, so the count the prover can open is bounded by the domain.
     let expected_queries = params.num_queries.min((n / 2).max(1));
     if rounds == 0
         || proof.layer_roots.len() != rounds
@@ -732,7 +722,6 @@ mod tests {
 mod fold_width_tests {
     use super::*;
 
-    // The fold width is divided by, so it must never reach zero.
     #[test]
     fn the_fold_width_never_reaches_zero_for_any_admissible_parameters() {
         for log_domain_size in 1u32..=24 {

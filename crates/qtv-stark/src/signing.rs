@@ -435,8 +435,6 @@ mod tests {
         assert_eq!(mask.per_iteration, MATRIX_L);
     }
 
-    // These jobs size a component for timing, not for a deployable proof. Pin that here
-    // so a figure taken off them is never read as a production soundness level.
     pub const SIGNING_JOB_MAX_SOUNDNESS_BITS: f64 = 32.0;
 
     #[test]

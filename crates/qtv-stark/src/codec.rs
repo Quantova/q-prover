@@ -123,9 +123,6 @@ impl<'a> Reader<'a> {
         Some(self.u64()? as usize)
     }
 
-    // A limb at or above the modulus is a second encoding of a value already
-    // representable, so a verifying proof would have many byte distinct re-encodings.
-    // Anything that ever identifies, dedups or bills a proof by its bytes needs one.
     fn felt(&mut self) -> Option<Felt> {
         let raw = self.u64()?;
         if raw >= crate::field::MODULUS {

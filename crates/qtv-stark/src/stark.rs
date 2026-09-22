@@ -608,8 +608,6 @@ fn verify_inner(
     if has_aux {
         transcript.absorb_digest(&proof.aux_root);
     } else {
-        // Unread fields must still be pinned, or a proof carries free bytes and is
-        // malleable into a second encoding the verifier accepts for the same statement.
         if proof.aux_root != [0u8; 32] {
             return false;
         }
