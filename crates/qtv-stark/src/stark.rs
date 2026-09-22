@@ -24,6 +24,12 @@ pub struct QueryOpening {
     pub rows: Vec<RowOpening>,
 }
 
+pub struct MaskOpening {
+    pub index: usize,
+    pub values: Vec<Felt>,
+    pub path: MerkleProof,
+}
+
 pub struct StarkProof {
     pub trace_root: Digest,
     pub aux_root: Digest,
@@ -31,6 +37,18 @@ pub struct StarkProof {
     pub openings: Vec<QueryOpening>,
     pub trace_fri: FriProof<Fp3>,
     pub trace_openings: Vec<QueryOpening>,
+    pub mask_root: Digest,
+    pub mask_openings: Vec<MaskOpening>,
+}
+
+const MASK_WIDTH: usize = 6;
+
+fn mask_at(mask: &[Vec<Felt>], offset: usize, index: usize) -> Fp3 {
+    Fp3::new(
+        mask[offset][index],
+        mask[offset + 1][index],
+        mask[offset + 2][index],
+    )
 }
 
 struct Domain {
@@ -46,7 +64,10 @@ struct Domain {
 
 impl Domain {
     fn new(air: &Air, params: &StarkParams) -> Self {
-        let n = air.length();
+        Domain::with_shape(air.length(), air.max_degree(), params)
+    }
+
+    fn with_shape(n: usize, max_degree: usize, params: &StarkParams) -> Self {
         let log_n = n.trailing_zeros();
         let lde_blowup = params.lde_blowup;
         assert!(
@@ -54,7 +75,7 @@ impl Domain {
             "blow up must be a power of two of at least two"
         );
         let log_size = log_n + lde_blowup.trailing_zeros();
-        let factor = air.max_degree().next_power_of_two();
+        let factor = max_degree.next_power_of_two();
         let fri_blowup = lde_blowup / factor;
         assert!(
             fri_blowup >= 2,
@@ -198,6 +219,7 @@ pub fn prove_with_domain(
         trace,
         &domain,
         base_lde,
+        None,
         params.num_queries,
         context,
         trace_fri_blowup,
@@ -215,6 +237,8 @@ fn absorb_statement(transcript: &mut Transcript, air: &Air) {
         transcript.absorb(&(boundary.row as u64).to_le_bytes());
         transcript.absorb_felt(boundary.value);
     }
+    transcript.absorb(&(air.publics().len() as u64).to_le_bytes());
+    transcript.absorb(air.publics());
 }
 
 fn prove_columns(
@@ -222,6 +246,7 @@ fn prove_columns(
     trace: &TraceTable,
     domain: &Domain,
     base_lde: Vec<Vec<Felt>>,
+    mask: Option<Vec<Vec<Felt>>>,
     num_queries: usize,
     context: &[u8],
     trace_fri_blowup: usize,
@@ -232,6 +257,13 @@ fn prove_columns(
     let mut transcript = Transcript::with_domain(context);
     absorb_statement(&mut transcript, air);
     transcript.absorb_digest(&trace_root);
+    let mask_tree = mask
+        .as_ref()
+        .map(|columns| commit_rows(columns, domain.size));
+    let mask_root = mask_tree.as_ref().map_or([0u8; 32], |tree| tree.root());
+    if mask_tree.is_some() {
+        transcript.absorb_digest(&mask_root);
+    }
     let challenges: Vec<Fp3> = (0..air.num_challenges())
         .map(|_| transcript.challenge_ext())
         .collect();
@@ -270,6 +302,11 @@ fn prove_columns(
             *slot = slot.add(power.mul(Fp3::from_base(*cell)));
         }
         power = power.mul(trace_challenge);
+    }
+    if let Some(columns) = &mask {
+        for (i, slot) in trace_combo.iter_mut().enumerate() {
+            *slot = slot.add(mask_at(columns, 3, i));
+        }
     }
     let trace_fri_params = FriParams {
         log_domain_size: domain.log_size,
@@ -321,6 +358,11 @@ fn prove_columns(
             &next,
         );
         point = point.mul(domain.omega_n);
+    }
+    if let Some(columns) = &mask {
+        for (i, slot) in composition.iter_mut().enumerate() {
+            *slot = slot.add(mask_at(columns, 0, i));
+        }
     }
 
     let fri_proof = fri::prove_with_domain(
@@ -382,6 +424,31 @@ fn prove_columns(
         trace_openings.push(QueryOpening { rows });
     }
 
+    let mut mask_openings = Vec::new();
+    if let (Some(columns), Some(tree)) = (&mask, &mask_tree) {
+        crate::wipe::wipe(&mut composition, Fp3::ZERO);
+        crate::wipe::wipe(&mut trace_combo, Fp3::ZERO);
+        let positions = fri_proof
+            .queries
+            .iter()
+            .chain(trace_fri.queries.iter())
+            .map(|query| query.position);
+        for p in positions {
+            for index in [p, p + half] {
+                mask_openings.push(MaskOpening {
+                    index,
+                    values: columns.iter().map(|col| col[index]).collect(),
+                    path: tree.open(index),
+                });
+            }
+        }
+    }
+    if let Some(mut columns) = mask {
+        for column in columns.iter_mut().chain(column_lde.iter_mut()) {
+            crate::wipe::wipe(column, Felt::ZERO);
+        }
+    }
+
     StarkProof {
         trace_root,
         aux_root,
@@ -389,7 +456,101 @@ fn prove_columns(
         openings,
         trace_fri,
         trace_openings,
+        mask_root,
+        mask_openings,
     }
+}
+
+fn shape_fits(
+    domain: &Domain,
+    trace_fri_blowup: usize,
+    num_queries: usize,
+    proof: &StarkProof,
+) -> bool {
+    let trace_fri_params = FriParams {
+        log_domain_size: domain.log_size,
+        num_queries,
+        blowup: trace_fri_blowup,
+    };
+    fri::shape_is_admissible(&trace_fri_params, &proof.trace_fri)
+        && fri::shape_is_admissible(&domain.fri_params(num_queries), &proof.fri)
+        && proof.openings.len() == proof.fri.queries.len()
+        && proof.trace_openings.len() == proof.trace_fri.queries.len()
+}
+
+pub fn proof_shape_fits(
+    length: usize,
+    max_degree: usize,
+    params: &StarkParams,
+    proof: &StarkProof,
+) -> bool {
+    if !length.is_power_of_two()
+        || !params.lde_blowup.is_power_of_two()
+        || params.lde_blowup < 2
+        || max_degree.next_power_of_two() * 2 > params.lde_blowup
+    {
+        return false;
+    }
+    let domain = Domain::with_shape(length, max_degree, params);
+    shape_fits(&domain, domain.lde_blowup, params.num_queries, proof)
+}
+
+fn mask_openings_verify(
+    proof: &StarkProof,
+    masked: bool,
+    half: usize,
+    size: usize,
+) -> Option<Vec<[Fp3; 2]>> {
+    if !masked {
+        if proof.mask_root != [0u8; 32] || !proof.mask_openings.is_empty() {
+            return None;
+        }
+        let zeros = [Fp3::ZERO, Fp3::ZERO];
+        return Some(vec![
+            zeros;
+            proof.fri.queries.len() + proof.trace_fri.queries.len()
+        ]);
+    }
+    let positions: Vec<usize> = proof
+        .fri
+        .queries
+        .iter()
+        .chain(proof.trace_fri.queries.iter())
+        .map(|query| query.position)
+        .collect();
+    if proof.mask_openings.len() != 2 * positions.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(positions.len());
+    for (k, &p) in positions.iter().enumerate() {
+        if p >= half {
+            return None;
+        }
+        let pair = &proof.mask_openings[2 * k..2 * k + 2];
+        let offset = if k < proof.fri.queries.len() { 0 } else { 3 };
+        let mut values = [Fp3::ZERO; 2];
+        for (slot, (opening, index)) in values.iter_mut().zip(pair.iter().zip([p, p + half])) {
+            if opening.index != index
+                || opening.path.leaf_index != index
+                || opening.values.len() != MASK_WIDTH
+                || !crate::merkle::verify_with_leaves(
+                    &proof.mask_root,
+                    &hash_row(&opening.values),
+                    &opening.path,
+                    size,
+                )
+            {
+                return None;
+            }
+            *slot = Fp3::new(
+                opening.values[offset],
+                opening.values[offset + 1],
+                opening.values[offset + 2],
+            );
+        }
+        out.push(values);
+    }
+    Some(out)
 }
 
 pub fn verify(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
@@ -411,6 +572,7 @@ pub fn verify_with_domain(
         params.num_queries,
         proof,
         context,
+        false,
     )
 }
 
@@ -421,12 +583,25 @@ fn verify_inner(
     num_queries: usize,
     proof: &StarkProof,
     context: &[u8],
+    masked: bool,
 ) -> bool {
+    let trace_fri_params = FriParams {
+        log_domain_size: domain.log_size,
+        num_queries,
+        blowup: trace_fri_blowup,
+    };
+    let fri_params = domain.fri_params(num_queries);
+    if !shape_fits(domain, trace_fri_blowup, num_queries, proof) {
+        return false;
+    }
     let base_width = air.base_width();
     let has_aux = air.aux_width() > 0;
     let mut transcript = Transcript::with_domain(context);
     absorb_statement(&mut transcript, air);
     transcript.absorb_digest(&proof.trace_root);
+    if masked {
+        transcript.absorb_digest(&proof.mask_root);
+    }
     let challenges: Vec<Fp3> = (0..air.num_challenges())
         .map(|_| transcript.challenge_ext())
         .collect();
@@ -448,23 +623,6 @@ fn verify_inner(
             return false;
         }
     }
-    // Shape before work. The draw below is one challenge per constraint, and for a batch
-    // the constraint count follows a caller chosen segment count, so a proof that cannot
-    // be well formed must be refused before it buys that.
-    let trace_fri_params = FriParams {
-        log_domain_size: domain.log_size,
-        num_queries,
-        blowup: trace_fri_blowup,
-    };
-    let fri_params = domain.fri_params(num_queries);
-    if !fri::shape_is_admissible(&trace_fri_params, &proof.trace_fri)
-        || !fri::shape_is_admissible(&fri_params, &proof.fri)
-        || proof.openings.len() != proof.fri.queries.len()
-        || proof.trace_openings.len() != proof.trace_fri.queries.len()
-    {
-        return false;
-    }
-
     let num_constraints =
         air.transitions().len() + air.boundaries().len() + air.permutations().len();
     let weights: Vec<Fp3> = (0..num_constraints)
@@ -481,10 +639,21 @@ fn verify_inner(
     }
 
     let half = domain.size / 2;
+    let masks = match mask_openings_verify(proof, masked, half, domain.size) {
+        Some(masks) => masks,
+        None => return false,
+    };
+    let (composition_masks, trace_masks) = masks.split_at(proof.fri.queries.len());
     let last_point = domain.last_point();
     let boundary_points = domain.boundary_points(air);
 
-    for (query, opening) in proof.fri.queries.iter().zip(&proof.openings) {
+    for ((query, opening), mask) in proof
+        .fri
+        .queries
+        .iter()
+        .zip(&proof.openings)
+        .zip(composition_masks)
+    {
         let p = query.position;
         if p >= half {
             return false;
@@ -538,7 +707,7 @@ fn verify_inner(
             &opening.rows[0].values,
             &opening.rows[1].values,
         );
-        if recomputed_low != query.layers[0].eval {
+        if recomputed_low.add(mask[0]) != query.layers[0].eval {
             return false;
         }
 
@@ -554,7 +723,7 @@ fn verify_inner(
             &opening.rows[2].values,
             &opening.rows[3].values,
         );
-        if recomputed_high != query.layers[0].sibling {
+        if recomputed_high.add(mask[1]) != query.layers[0].sibling {
             return false;
         }
     }
@@ -562,7 +731,13 @@ fn verify_inner(
     if proof.trace_openings.len() != proof.trace_fri.queries.len() {
         return false;
     }
-    for (query, opening) in proof.trace_fri.queries.iter().zip(&proof.trace_openings) {
+    for ((query, opening), mask) in proof
+        .trace_fri
+        .queries
+        .iter()
+        .zip(&proof.trace_openings)
+        .zip(trace_masks)
+    {
         let p = query.position;
         if p >= half || query.layers.is_empty() {
             return false;
@@ -603,12 +778,12 @@ fn verify_inner(
                 acc = acc.add(power.mul(Fp3::from_base(*value)));
                 power = power.mul(trace_challenge);
             }
-            let claimed = if index == p {
-                query.layers[0].eval
+            let (claimed, masking) = if index == p {
+                (query.layers[0].eval, mask[0])
             } else {
-                query.layers[0].sibling
+                (query.layers[0].sibling, mask[1])
             };
-            if acc != claimed {
+            if acc.add(masking) != claimed {
                 return false;
             }
         }
@@ -662,13 +837,16 @@ fn blinding_values(seed: &[u8], column: usize, blind: usize) -> Vec<Felt> {
     input.extend_from_slice(&(column as u64).to_le_bytes());
     let mut bytes = vec![0u8; blind * 8];
     qtv_crypto::sha3::shake256(&input, &mut bytes);
-    (0..blind)
+    let out = (0..blind)
         .map(|k| {
             let mut word = [0u8; 8];
             word.copy_from_slice(&bytes[k * 8..k * 8 + 8]);
             Felt::new(u64::from_le_bytes(word))
         })
-        .collect()
+        .collect();
+    crate::wipe::wipe(&mut bytes, 0);
+    crate::wipe::wipe(&mut input, 0);
+    out
 }
 
 fn blinded_columns(
@@ -683,13 +861,33 @@ fn blinded_columns(
     for column in 0..table.width() {
         let mut coeffs = poly::interpolate(table.column(column));
         coeffs.resize(n + blind, Felt::ZERO);
-        let r = blinding_values(seed, column_offset + column, blind);
+        let mut r = blinding_values(seed, column_offset + column, blind);
         for (k, rk) in r.iter().enumerate() {
             coeffs[k] = coeffs[k].sub(*rk);
             coeffs[n + k] = coeffs[n + k].add(*rk);
         }
         out.push(poly::evaluate_coset(&coeffs, domain.log_size, domain.shift));
+        crate::wipe::wipe(&mut r, Felt::ZERO);
+        crate::wipe::wipe(&mut coeffs, Felt::ZERO);
     }
+    out
+}
+
+fn masking_columns(domain: &Domain, trace_fri_blowup: usize, seed: &[u8]) -> Vec<Vec<Felt>> {
+    let bounds = [
+        domain.size / domain.fri_blowup,
+        domain.size / trace_fri_blowup,
+    ];
+    let mut label = Vec::with_capacity(seed.len() + 16);
+    label.extend_from_slice(b"qtv-stark/mask/v1");
+    label.extend_from_slice(seed);
+    let mut out = Vec::with_capacity(MASK_WIDTH);
+    for column in 0..MASK_WIDTH {
+        let mut coeffs = blinding_values(&label, column, bounds[column / 3]);
+        out.push(poly::evaluate_coset(&coeffs, domain.log_size, domain.shift));
+        crate::wipe::wipe(&mut coeffs, Felt::ZERO);
+    }
+    crate::wipe::wipe(&mut label, 0);
     out
 }
 
@@ -715,11 +913,13 @@ pub fn prove_zk(
     );
     let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
     let base_lde = blinded_columns(trace, &domain, params.blind, seed, 0);
+    let mask = masking_columns(&domain, trace_fri_blowup, seed);
     prove_columns(
         air,
         trace,
         &domain,
         base_lde,
+        Some(mask),
         params.num_queries,
         context,
         trace_fri_blowup,
@@ -738,6 +938,7 @@ pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8
         params.num_queries,
         proof,
         context,
+        true,
     )
 }
 
@@ -779,6 +980,7 @@ mod tests {
             trace,
             &domain,
             base_lde,
+            None,
             params.num_queries,
             &[],
             domain.lde_blowup,
@@ -864,6 +1066,17 @@ mod tests {
             !verify(&constant_columns(&shifted), &params(), &proof),
             "the same proof must not verify for public values it was never made for"
         );
+    }
+
+    #[test]
+    fn a_proof_does_not_carry_over_to_other_public_bytes() {
+        let (mut air, trace) = squaring(16, Felt::new(3));
+        air.bind_public(b"first statement");
+        let proof = prove(&air, &trace, &params());
+        assert!(verify(&air, &params(), &proof));
+        let (mut other, _) = squaring(16, Felt::new(3));
+        other.bind_public(b"other statement");
+        assert!(!verify(&other, &params(), &proof));
     }
 
     #[test]

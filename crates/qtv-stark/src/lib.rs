@@ -36,4 +36,5 @@ pub mod signing;
 pub mod sponge;
 pub mod stark;
 pub mod verifier;
+mod wipe;
 pub mod zkvrf;

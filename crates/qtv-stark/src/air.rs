@@ -46,6 +46,12 @@ impl TraceTable {
     pub fn row(&self, row: usize) -> Vec<Felt> {
         self.columns.iter().map(|c| c[row]).collect()
     }
+
+    pub fn wipe(&mut self) {
+        for column in self.columns.iter_mut() {
+            crate::wipe::wipe(column, Felt::ZERO);
+        }
+    }
 }
 
 pub struct Transition {
@@ -89,6 +95,7 @@ pub struct Air {
     transitions: Vec<Transition>,
     boundaries: Vec<Boundary>,
     permutations: Vec<Permutation>,
+    publics: Vec<u8>,
 }
 
 impl Air {
@@ -102,6 +109,7 @@ impl Air {
             transitions: Vec::new(),
             boundaries: Vec::new(),
             permutations: Vec::new(),
+            publics: Vec::new(),
         }
     }
 
@@ -135,6 +143,16 @@ impl Air {
 
     pub fn permutations(&self) -> &[Permutation] {
         &self.permutations
+    }
+
+    pub fn publics(&self) -> &[u8] {
+        &self.publics
+    }
+
+    pub fn bind_public(&mut self, bytes: &[u8]) {
+        self.publics
+            .extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        self.publics.extend_from_slice(bytes);
     }
 
     pub fn add_transition<F>(&mut self, degree: usize, rule: F)

@@ -5,7 +5,7 @@ use crate::field::Felt;
 use crate::field_ext::Fp3;
 use crate::fri::{FriProof, QueryLayer, QueryProof};
 use crate::merkle::{Digest, MerkleProof};
-use crate::stark::{QueryOpening, RowOpening, StarkProof};
+use crate::stark::{MaskOpening, QueryOpening, RowOpening, StarkProof};
 
 fn put_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
@@ -79,6 +79,16 @@ pub fn encode_proof(proof: &StarkProof) -> Vec<u8> {
     put_openings(&mut out, &proof.openings);
     put_fri(&mut out, &proof.trace_fri);
     put_openings(&mut out, &proof.trace_openings);
+    put_digest(&mut out, &proof.mask_root);
+    put_u64(&mut out, proof.mask_openings.len() as u64);
+    for opening in &proof.mask_openings {
+        put_u64(&mut out, opening.index as u64);
+        put_u64(&mut out, opening.values.len() as u64);
+        for value in &opening.values {
+            put_felt(&mut out, *value);
+        }
+        put_merkle(&mut out, &opening.path);
+    }
     out
 }
 
@@ -223,6 +233,26 @@ impl<'a> Reader<'a> {
         }
         Some(openings)
     }
+
+    fn masks(&mut self) -> Option<Vec<MaskOpening>> {
+        let count = self.count()?;
+        let mut masks = Vec::new();
+        for _ in 0..count {
+            let index = self.count()?;
+            let value_count = self.count()?;
+            let mut values = Vec::new();
+            for _ in 0..value_count {
+                values.push(self.felt()?);
+            }
+            let path = self.merkle()?;
+            masks.push(MaskOpening {
+                index,
+                values,
+                path,
+            });
+        }
+        Some(masks)
+    }
 }
 
 pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
@@ -233,6 +263,8 @@ pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
     let openings = reader.openings()?;
     let trace_fri = reader.fri()?;
     let trace_openings = reader.openings()?;
+    let mask_root = reader.digest()?;
+    let mask_openings = reader.masks()?;
 
     if !reader.done() {
         return None;
@@ -244,6 +276,8 @@ pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
         openings,
         trace_fri,
         trace_openings,
+        mask_root,
+        mask_openings,
     })
 }
 

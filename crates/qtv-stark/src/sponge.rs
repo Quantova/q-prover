@@ -259,6 +259,14 @@ pub fn absorb_air(rate: usize, message: &[u8], output: &[u8]) -> Air {
     let selb0 = SPONGE_WIDTH;
     let width = SPONGE_WIDTH + nblocks - 1;
     let mut air = Air::new(width, rows);
+    air.bind_public(&(rate as u64).to_le_bytes());
+    for block in blocks.iter() {
+        let mut lanes = Vec::with_capacity(LANES * 8);
+        for lane in block.iter() {
+            lanes.extend_from_slice(&lane.to_le_bytes());
+        }
+        air.bind_public(&lanes);
+    }
     add_block_constraints(&mut air, 0);
 
     for x in 0..5 {
@@ -448,6 +456,18 @@ mod tests {
         let proof = prove(&instance.air, &instance.trace, &params());
         let air = absorb_air(SHAKE256_RATE, &message, &instance.output);
         assert!(verify(&air, &params(), &proof));
+    }
+
+    #[test]
+    fn every_absorbed_block_is_part_of_the_statement() {
+        let message = multi_block_message();
+        let output = absorb_output(SHAKE256_RATE, &message);
+        let mut later = message.clone();
+        let last = later.len() - 1;
+        later[last] ^= 1;
+        let a = absorb_air(SHAKE256_RATE, &message, &output);
+        let b = absorb_air(SHAKE256_RATE, &later, &output);
+        assert_ne!(a.publics(), b.publics());
     }
 
     #[test]

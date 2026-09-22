@@ -7,7 +7,7 @@ use crate::certificate::{certificate_air, certificate_trace};
 use crate::codec::{decode_proof, encode_proof};
 use crate::norm::NORM_BOUND;
 use crate::sponge::{shake_output, SEGMENT_ROWS, SHAKE256_RATE};
-use crate::stark::{prove_with_domain, verify_with_domain, StarkParams};
+use crate::stark::{proof_shape_fits, prove_with_domain, verify_with_domain, StarkParams};
 
 pub const CERT_BLOWUP: usize = 128;
 
@@ -18,6 +18,8 @@ pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 pub const MAX_CERT_ROWS: usize = 1 << 24;
 
 pub const MAX_CERT_SEGMENTS: usize = 1 << 12;
+
+pub const CERT_MAX_DEGREE: usize = 11;
 
 fn params() -> StarkParams {
     StarkParams {
@@ -86,14 +88,17 @@ pub fn verify_batch(message: &[u8], context: &[u8], cert: &BatchProof) -> bool {
     {
         return false;
     }
-    match cert.segments.checked_mul(SEGMENT_ROWS) {
-        Some(rows) if rows.is_power_of_two() && rows <= MAX_CERT_ROWS => {}
+    let rows = match cert.segments.checked_mul(SEGMENT_ROWS) {
+        Some(rows) if rows.is_power_of_two() && rows <= MAX_CERT_ROWS => rows,
         _ => return false,
-    }
+    };
     let proof = match decode_proof(&cert.proof) {
         Some(proof) => proof,
         None => return false,
     };
+    if !proof_shape_fits(rows, CERT_MAX_DEGREE, &params(), &proof) {
+        return false;
+    }
     let output = shake_output(SHAKE256_RATE, cert.segments, message);
     let air = certificate_air(cert.segments, message, &output);
     verify_with_domain(&air, &params(), &proof, context)
@@ -230,6 +235,33 @@ mod tests {
         assert!((1usize << 13) > MAX_CERT_SEGMENTS);
         assert!(((1usize << 13) * SEGMENT_ROWS).is_power_of_two());
         assert!(!verify_batch(message, CTX, &cert));
+    }
+
+    #[test]
+    fn the_shape_degree_matches_the_certificate_air() {
+        let output = shake_output(SHAKE256_RATE, 1, b"degree");
+        assert_eq!(
+            certificate_air(1, b"degree", &output).max_degree(),
+            CERT_MAX_DEGREE
+        );
+    }
+
+    #[test]
+    fn a_proof_of_the_wrong_shape_is_refused_before_the_air_is_built() {
+        let cert = prove_batch(b"shape", CTX, 1, &[]);
+        let proof = decode_proof(&cert.proof).unwrap();
+        assert!(proof_shape_fits(
+            SEGMENT_ROWS,
+            CERT_MAX_DEGREE,
+            &params(),
+            &proof
+        ));
+        assert!(!proof_shape_fits(
+            2 * SEGMENT_ROWS,
+            CERT_MAX_DEGREE,
+            &params(),
+            &proof
+        ));
     }
 
     #[test]

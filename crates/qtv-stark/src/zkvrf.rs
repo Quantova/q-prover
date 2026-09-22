@@ -165,13 +165,16 @@ fn blind_seed(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS], context: &[u8]) -> [u8
     buf.extend_from_slice(context);
     let mut out = [0u8; 32];
     shake256(&buf, &mut out);
+    crate::wipe::wipe(&mut buf, 0);
     out
 }
 
 pub fn prove(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS], context: &[u8]) -> Draw {
-    let seed = blind_seed(sk, x, context);
-    let instance = vrf_trace(sk, x);
+    let mut seed = blind_seed(sk, x, context);
+    let mut instance = vrf_trace(sk, x);
     let proof = prove_zk(&instance.air, &instance.trace, &params(), context, &seed);
+    crate::wipe::wipe(&mut seed, 0);
+    instance.trace.wipe();
     Draw {
         output: instance.output,
         commit: instance.commit,
@@ -456,6 +459,39 @@ mod tests {
             VRF_BLIND,
             positions.len()
         );
+    }
+
+    #[test]
+    fn a_blinded_proof_is_masked_and_refused_without_its_masks() {
+        let instance = vrf_trace(&sk(), &input());
+        let proof = prove_zk(
+            &instance.air,
+            &instance.trace,
+            &params(),
+            b"vrf",
+            &[6u8; 32],
+        );
+        let air = vrf_air(&input(), &instance.output, &instance.commit);
+        assert_ne!(proof.mask_root, [0u8; 32]);
+        assert_eq!(
+            proof.mask_openings.len(),
+            2 * (proof.fri.queries.len() + proof.trace_fri.queries.len())
+        );
+
+        let mut stripped = crate::codec::decode_proof(&encode_proof(&proof)).unwrap();
+        stripped.mask_openings.clear();
+        stripped.mask_root = [0u8; 32];
+        assert!(!verify_zk(&air, &params(), &stripped, b"vrf"));
+
+        let mut shifted = crate::codec::decode_proof(&encode_proof(&proof)).unwrap();
+        shifted.mask_openings[0].values[0] = shifted.mask_openings[0].values[0].add(Felt::ONE);
+        assert!(!verify_zk(&air, &params(), &shifted, b"vrf"));
+
+        let unmasked = prove(&instance.air, &instance.trace, &sound_params());
+        assert!(unmasked.mask_openings.is_empty());
+        let mut padded = crate::codec::decode_proof(&encode_proof(&unmasked)).unwrap();
+        padded.mask_root = [1u8; 32];
+        assert!(!verify(&air, &sound_params(), &padded));
     }
 
     #[test]
