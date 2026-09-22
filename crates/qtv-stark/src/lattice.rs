@@ -187,7 +187,6 @@ mod tests {
         assert!(batch.air.is_satisfied(&batch.trace));
     }
 
-    #[test]
     // An operand outside the field satisfies a*b = quo*Q + r over the whole field while
     // being no modular product at all. The operand range checks are what refuse it.
     #[test]

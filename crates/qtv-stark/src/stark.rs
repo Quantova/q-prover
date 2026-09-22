@@ -204,6 +204,19 @@ pub fn prove_with_domain(
     )
 }
 
+fn absorb_statement(transcript: &mut Transcript, air: &Air) {
+    transcript.absorb(b"qtv-stark/statement");
+    transcript.absorb(&(air.length() as u64).to_le_bytes());
+    transcript.absorb(&(air.base_width() as u64).to_le_bytes());
+    transcript.absorb(&(air.aux_width() as u64).to_le_bytes());
+    transcript.absorb(&(air.boundaries().len() as u64).to_le_bytes());
+    for boundary in air.boundaries() {
+        transcript.absorb(&(boundary.column as u64).to_le_bytes());
+        transcript.absorb(&(boundary.row as u64).to_le_bytes());
+        transcript.absorb_felt(boundary.value);
+    }
+}
+
 fn prove_columns(
     air: &Air,
     trace: &TraceTable,
@@ -217,6 +230,7 @@ fn prove_columns(
     let trace_root = base_tree.root();
 
     let mut transcript = Transcript::with_domain(context);
+    absorb_statement(&mut transcript, air);
     transcript.absorb_digest(&trace_root);
     let challenges: Vec<Fp3> = (0..air.num_challenges())
         .map(|_| transcript.challenge_ext())
@@ -411,6 +425,7 @@ fn verify_inner(
     let base_width = air.base_width();
     let has_aux = air.aux_width() > 0;
     let mut transcript = Transcript::with_domain(context);
+    absorb_statement(&mut transcript, air);
     transcript.absorb_digest(&proof.trace_root);
     let challenges: Vec<Fp3> = (0..air.num_challenges())
         .map(|_| transcript.challenge_ext())
@@ -768,6 +783,87 @@ mod tests {
             &[],
             domain.lde_blowup,
         )
+    }
+
+    fn constant_columns(values: &[Felt; 4]) -> Air {
+        let mut air = Air::new(4, 16);
+        for column in 0..4 {
+            air.add_transition(1, move |current, next| next[column].sub(current[column]));
+        }
+        for (column, value) in values.iter().enumerate() {
+            air.add_boundary(column, 0, *value);
+        }
+        air
+    }
+
+    fn kernel_of(weights: &[Fp3]) -> [Felt; 4] {
+        let rows: Vec<[Felt; 4]> = (0..3)
+            .map(|k| {
+                let mut row = [Felt::ZERO; 4];
+                for (b, weight) in weights.iter().enumerate() {
+                    row[b] = weight.coefficients()[k];
+                }
+                row
+            })
+            .collect();
+        let mut m: Vec<[Felt; 4]> = rows;
+        for col in 0..3 {
+            let pivot = (col..3)
+                .find(|&r| m[r][col] != Felt::ZERO)
+                .expect("the drawn weights are in general position");
+            m.swap(col, pivot);
+            let inv = m[col][col].inv();
+            for c in 0..4 {
+                m[col][c] = m[col][c].mul(inv);
+            }
+            for r in 0..3 {
+                if r != col && m[r][col] != Felt::ZERO {
+                    let factor = m[r][col];
+                    for c in 0..4 {
+                        m[r][c] = m[r][c].sub(factor.mul(m[col][c]));
+                    }
+                }
+            }
+        }
+        [
+            Felt::ZERO.sub(m[0][3]),
+            Felt::ZERO.sub(m[1][3]),
+            Felt::ZERO.sub(m[2][3]),
+            Felt::ONE,
+        ]
+    }
+
+    #[test]
+    fn a_proof_cannot_be_moved_to_boundary_values_the_weights_do_not_see() {
+        let values = [Felt::new(11), Felt::new(22), Felt::new(33), Felt::new(44)];
+        let air = constant_columns(&values);
+        let mut trace = TraceTable::new(4, 16);
+        for (column, value) in values.iter().enumerate() {
+            for row in 0..16 {
+                trace.set(column, row, *value);
+            }
+        }
+        let proof = prove(&air, &trace, &params());
+        assert!(verify(&air, &params(), &proof));
+
+        let mut unbound = Transcript::with_domain(&[]);
+        unbound.absorb_digest(&proof.trace_root);
+        let weights: Vec<Fp3> = (0..8).map(|_| unbound.challenge_ext()).collect();
+        let delta = kernel_of(&weights[4..8]);
+        let mut sum = Fp3::ZERO;
+        for (weight, d) in weights[4..8].iter().zip(delta.iter()) {
+            sum = sum.add(weight.scale(*d));
+        }
+        assert_eq!(
+            sum,
+            Fp3::ZERO,
+            "the shift is invisible to weights drawn without the statement"
+        );
+        let shifted: [Felt; 4] = std::array::from_fn(|b| values[b].add(delta[b]));
+        assert!(
+            !verify(&constant_columns(&shifted), &params(), &proof),
+            "the same proof must not verify for public values it was never made for"
+        );
     }
 
     #[test]
