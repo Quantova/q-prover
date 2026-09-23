@@ -8,6 +8,8 @@ use crate::fri::{self, FriParams, FriProof, Transcript};
 use crate::merkle::{hash_row, Digest, MerkleProof, MerkleTree};
 use crate::poly;
 
+pub const MIN_QUERIES: usize = 16;
+
 pub struct StarkParams {
     pub lde_blowup: usize,
     pub num_queries: usize,
@@ -487,6 +489,7 @@ pub fn proof_shape_fits(
     if !length.is_power_of_two()
         || !params.lde_blowup.is_power_of_two()
         || params.lde_blowup < 2
+        || params.num_queries < MIN_QUERIES
         || max_degree.next_power_of_two() * 2 > params.lde_blowup
     {
         return false;
@@ -1198,6 +1201,29 @@ mod tests {
             trace.set(1, row, source[reorder(row)]);
         }
         (air, trace)
+    }
+
+    #[test]
+    fn a_query_starved_parameter_set_is_refused_before_it_can_prove_anything() {
+        let length = 16;
+        let (air, trace) = permutation(length, |i| (i * 7 + 5) % 16);
+        let proof = prove(&air, &trace, &params());
+        for starved in [0usize, 1, MIN_QUERIES - 1] {
+            let weak = StarkParams {
+                lde_blowup: 8,
+                num_queries: starved,
+            };
+            assert!(
+                !proof_shape_fits(length, air.max_degree(), &weak, &proof),
+                "a parameter set with {starved} queries proves nothing and must be refused"
+            );
+        }
+        assert!(proof_shape_fits(
+            length,
+            air.max_degree(),
+            &params(),
+            &proof
+        ));
     }
 
     #[test]

@@ -92,6 +92,10 @@ pub fn eval_at(coeffs: &[Felt], point: Felt) -> Felt {
 }
 
 pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
+    debug_assert!(
+        values.iter().all(|v| *v != Felt::ZERO),
+        "a zero poisons every inverse in the batch"
+    );
     let n = values.len();
     let mut prefix = vec![Felt::ONE; n];
     let mut running = Felt::ONE;
