@@ -34,9 +34,9 @@ const BASE_WIDTH: usize = CARRIER_OFF + SK_ELEMS;
 
 pub const VRF_BLOWUP: usize = 2048;
 
-pub const VRF_QUERIES: usize = 64;
+pub const VRF_QUERIES: usize = 155;
 
-pub const VRF_BLIND: usize = 448;
+pub const VRF_BLIND: usize = 930;
 
 fn active_round(global: usize) -> Option<usize> {
     if global < ROUNDS {
@@ -501,10 +501,11 @@ mod tests {
         let size = n * VRF_BLOWUP;
         let comp_bound = (max_degree * (n + VRF_BLIND)).next_power_of_two();
         let comp_fri_blowup = size / comp_bound;
-        let bits = VRF_QUERIES as f64 * 0.5 * (comp_fri_blowup as f64).log2();
+        let rate = 1.0 / comp_fri_blowup as f64;
+        let bits = VRF_QUERIES as f64 * -((1.0 + rate) / 2.0).log2();
         assert!(
             bits >= 128.0,
-            "composition soundness {bits} bits below target"
+            "composition soundness {bits} bits below target under unique decoding"
         );
         let openings = 6 * VRF_QUERIES;
         assert!(

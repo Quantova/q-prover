@@ -11,7 +11,7 @@ use crate::stark::{proof_shape_fits, prove_with_domain, verify_with_domain, Star
 
 pub const CERT_BLOWUP: usize = 128;
 
-pub const CERT_QUERIES: usize = 86;
+pub const CERT_QUERIES: usize = 155;
 
 pub const MAX_MESSAGE_BYTES: usize = SHAKE256_RATE - 1;
 
@@ -274,10 +274,11 @@ mod tests {
         let size = n * CERT_BLOWUP;
         let comp_bound = air.max_degree().next_power_of_two() * n;
         let comp_fri_blowup = size / comp_bound;
-        let bits = CERT_QUERIES as f64 * 0.5 * (comp_fri_blowup as f64).log2();
+        let rate = 1.0 / comp_fri_blowup as f64;
+        let bits = CERT_QUERIES as f64 * -((1.0 + rate) / 2.0).log2();
         assert!(
             bits >= 128.0,
-            "certificate composition soundness {bits} bits below target"
+            "certificate composition soundness {bits} bits below target under unique decoding"
         );
     }
 }
