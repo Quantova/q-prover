@@ -297,6 +297,11 @@ fn prove_columns(
         .collect();
 
     let trace_challenge = transcript.challenge_ext();
+    let mask_challenge = if mask_tree.is_some() {
+        transcript.challenge_ext()
+    } else {
+        Fp3::ZERO
+    };
     let mut trace_combo = vec![Fp3::ZERO; domain.size];
     let mut power = Fp3::ONE;
     for column in &column_lde {
@@ -307,7 +312,7 @@ fn prove_columns(
     }
     if let Some(columns) = &mask {
         for (i, slot) in trace_combo.iter_mut().enumerate() {
-            *slot = slot.add(mask_at(columns, 3, i));
+            *slot = slot.add(mask_challenge.mul(mask_at(columns, 3, i)));
         }
     }
     let trace_fri_params = FriParams {
@@ -631,6 +636,11 @@ fn verify_inner(
         .collect();
 
     let trace_challenge = transcript.challenge_ext();
+    let mask_challenge = if masked {
+        transcript.challenge_ext()
+    } else {
+        Fp3::ZERO
+    };
     if !fri::verify_with_domain(&trace_fri_params, &proof.trace_fri, &mut transcript) {
         return false;
     }
@@ -784,7 +794,7 @@ fn verify_inner(
             } else {
                 (query.layers[0].sibling, mask[1])
             };
-            if acc.add(masking) != claimed {
+            if acc.add(mask_challenge.mul(masking)) != claimed {
                 return false;
             }
         }
