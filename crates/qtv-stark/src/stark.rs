@@ -474,9 +474,6 @@ fn shape_fits(
     num_queries: usize,
     proof: &StarkProof,
 ) -> bool {
-    if num_queries < MIN_QUERIES {
-        return false;
-    }
     let trace_fri_params = FriParams {
         log_domain_size: domain.log_size,
         num_queries,

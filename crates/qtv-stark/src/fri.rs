@@ -105,6 +105,8 @@ pub fn fold_layer<F: FriField>(evaluations: &[F], challenge: F, generator_inv: F
 
 pub const PROTOCOL_TAG: &[u8] = b"QTV-STARK/v2";
 
+pub const MIN_QUERIES: usize = 16;
+
 pub struct Transcript {
     state: Digest,
 }
@@ -215,6 +217,9 @@ pub fn shape_is_admissible<F: FriField>(params: &FriParams, proof: &FriProof<F>)
     }
     let rounds = params.rounds();
     let expected_queries = params.num_queries.min((params.domain_size() / 2).max(1));
+    if expected_queries < MIN_QUERIES {
+        return false;
+    }
     rounds != 0
         && proof.layer_roots.len() == rounds
         && proof.final_layer.len() == params.blowup
@@ -780,6 +785,44 @@ mod fold_width_tests {
             !params.blowup.is_power_of_two(),
             "a zero blowup must fail the power of two check, it is the guard that keeps the \
              fold width above zero"
+        );
+    }
+
+    #[test]
+    fn a_domain_too_small_to_reach_the_query_floor_is_refused() {
+        let params = FriParams {
+            log_domain_size: 3,
+            num_queries: 24,
+            blowup: 4,
+        };
+        let effective = params.num_queries.min((params.domain_size() / 2).max(1));
+        assert!(
+            effective < MIN_QUERIES,
+            "this domain is the case under test, it clamps to {effective}"
+        );
+        let proof: FriProof<Felt> = FriProof {
+            layer_roots: vec![[0u8; 32]; params.rounds()],
+            final_layer: vec![Felt::ZERO; params.blowup],
+            queries: Vec::new(),
+        };
+        assert!(!shape_is_admissible(&params, &proof));
+    }
+
+    #[test]
+    fn a_zero_query_claim_is_refused_by_the_primitive_itself() {
+        let params = FriParams {
+            log_domain_size: 8,
+            num_queries: 0,
+            blowup: 4,
+        };
+        let proof: FriProof<Felt> = FriProof {
+            layer_roots: vec![[0u8; 32]; params.rounds()],
+            final_layer: vec![Felt::ZERO; params.blowup],
+            queries: Vec::new(),
+        };
+        assert!(
+            !shape_is_admissible(&params, &proof),
+            "nothing is spot checked at zero queries, so any roots would verify"
         );
     }
 }
