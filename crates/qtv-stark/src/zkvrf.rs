@@ -56,9 +56,12 @@ fn state_input(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS]) -> [Felt; WIDTH] {
 }
 
 pub fn vrf_output(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS]) -> [Felt; OUT_ELEMS] {
-    let states = rescue::permute_states(&state_input(sk, x));
+    let mut input = state_input(sk, x);
+    let mut states = rescue::permute_states(&input);
     let mut out = [Felt::ZERO; OUT_ELEMS];
     out.copy_from_slice(&states[ROUNDS][..OUT_ELEMS]);
+    crate::wipe::wipe(&mut input, Felt::ZERO);
+    crate::wipe::wipe(&mut states, [Felt::ZERO; WIDTH]);
     out
 }
 
@@ -210,7 +213,7 @@ fn fill_segment(
     input: &[Felt; WIDTH],
     rc: &[[Felt; WIDTH]],
 ) {
-    let states = rescue::permute_states(input);
+    let mut states = rescue::permute_states(input);
     for r in 0..SEG {
         let global = base_row + r;
         let state = if r <= ROUNDS {
@@ -235,6 +238,7 @@ fn fill_segment(
             }
         }
     }
+    crate::wipe::wipe(&mut states, [Felt::ZERO; WIDTH]);
 }
 
 pub fn vrf_trace(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS]) -> VrfInstance {
@@ -243,13 +247,12 @@ pub fn vrf_trace(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS]) -> VrfInstance {
     let rc = rescue::round_constants();
 
     let mut trace = TraceTable::new(BASE_WIDTH, ROWS);
-    fill_segment(&mut trace, 0, &state_input(sk, x), &rc);
-    fill_segment(
-        &mut trace,
-        SEG,
-        &state_input(sk, &[Felt::ZERO; X_ELEMS]),
-        &rc,
-    );
+    let mut drawn = state_input(sk, x);
+    fill_segment(&mut trace, 0, &drawn, &rc);
+    crate::wipe::wipe(&mut drawn, Felt::ZERO);
+    let mut committed = state_input(sk, &[Felt::ZERO; X_ELEMS]);
+    fill_segment(&mut trace, SEG, &committed, &rc);
+    crate::wipe::wipe(&mut committed, Felt::ZERO);
 
     for global in 0..ROWS {
         let insel = if global == 0 || global == SEG {
