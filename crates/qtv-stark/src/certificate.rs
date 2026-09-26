@@ -88,34 +88,15 @@ pub fn certificate_air(perms: usize, message: &[u8], output: &[u8]) -> Air {
     lattice::add_constraints(&mut air, MODMUL_BASE);
     norm::add_constraints(&mut air, NORM_BASE);
 
-    let gamma = air.add_challenge();
     let dec_r = DECOMPOSE_BASE + decompose::COL_R;
     let hint_r = HINT_BASE + hint::COL_R;
     let mm_a = MODMUL_BASE + lattice::COL_A;
     let mm_b = MODMUL_BASE + lattice::COL_B;
     let norm_z = NORM_BASE + norm::COL_Z;
 
-    air.add_permutation(
-        1,
-        move |row, ch| ch[gamma].sub_base(row[R_R]),
-        move |row, ch| ch[gamma].sub_base(row[dec_r]),
-    );
-    air.add_permutation(
-        1,
-        move |row, ch| ch[gamma].sub_base(row[R_R]),
-        move |row, ch| ch[gamma].sub_base(row[hint_r]),
-    );
-    air.add_permutation(
-        1,
-        move |row, ch| ch[gamma].sub_base(row[R_R]),
-        move |row, ch| ch[gamma].sub_base(row[mm_a]),
-    );
-
-    air.add_permutation(
-        1,
-        move |row, ch| ch[gamma].sub_base(row[mm_b]),
-        move |row, ch| ch[gamma].sub_base(row[norm_z]),
-    );
+    for (left, right) in [(R_R, dec_r), (R_R, hint_r), (R_R, mm_a), (mm_b, norm_z)] {
+        air.add_single_row(1, move |row| row[left].sub(row[right]));
+    }
 
     air
 }
@@ -203,12 +184,8 @@ mod tests {
         }
     }
 
-    fn challenges() -> [Fp3; 1] {
-        [Fp3::new(
-            Felt::new(20015998343868),
-            Felt::new(77),
-            Felt::new(4242),
-        )]
+    fn challenges() -> [Fp3; 0] {
+        []
     }
 
     fn responses() -> Vec<u64> {
@@ -263,6 +240,19 @@ mod tests {
         let dec_r = DECOMPOSE_BASE + decompose::COL_R;
         let row = squeeze_row(0);
         trace.set(dec_r, row, trace.get(dec_r, row).add(Felt::new(7)));
+        assert!(!cert.air.is_satisfied_with(&trace, &challenges()));
+    }
+
+    #[test]
+    fn coefficients_swapped_between_rows_are_rejected() {
+        let cert = sample();
+        let mut trace = cert.trace;
+        let dec_r = DECOMPOSE_BASE + decompose::COL_R;
+        let (a, b) = (squeeze_row(0), squeeze_row(1));
+        let (va, vb) = (trace.get(dec_r, a), trace.get(dec_r, b));
+        assert_ne!(va, vb);
+        trace.set(dec_r, a, vb);
+        trace.set(dec_r, b, va);
         assert!(!cert.air.is_satisfied_with(&trace, &challenges()));
     }
 

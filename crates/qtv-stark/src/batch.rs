@@ -18,14 +18,9 @@ pub fn batch_air(length: usize) -> Air {
     decompose::add_constraints(&mut air, DECOMPOSE_BASE);
     hint::add_constraints(&mut air, HINT_BASE);
 
-    let gamma = air.add_challenge();
     let dec_r = DECOMPOSE_BASE + decompose::COL_R;
     let hint_r = HINT_BASE + hint::COL_R;
-    air.add_permutation(
-        1,
-        move |row, ch| ch[gamma].sub_base(row[dec_r]),
-        move |row, ch| ch[gamma].sub_base(row[hint_r]),
-    );
+    air.add_single_row(1, move |row| row[dec_r].sub(row[hint_r]));
 
     air
 }
@@ -125,11 +120,7 @@ mod tests {
     #[test]
     fn the_permutation_binds_the_shared_coefficients() {
         let cert = sample_batch();
-        let challenges = [Fp3::new(
-            Felt::new(20015998343868),
-            Felt::new(77),
-            Felt::new(4242),
-        )];
+        let challenges: [Fp3; 0] = [];
         assert!(cert.air.is_satisfied_with(&cert.trace, &challenges));
     }
 
@@ -139,11 +130,7 @@ mod tests {
         let mut trace = cert.trace;
         let hint_r = HINT_BASE + hint::COL_R;
         trace.set(hint_r, 3, trace.get(hint_r, 3).add(Felt::new(5)));
-        let challenges = [Fp3::new(
-            Felt::new(20015998343868),
-            Felt::new(77),
-            Felt::new(4242),
-        )];
+        let challenges: [Fp3; 0] = [];
         assert!(!cert.air.is_satisfied_with(&trace, &challenges));
     }
 
