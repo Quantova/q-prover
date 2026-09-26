@@ -364,6 +364,7 @@ pub fn verify_with_domain<F: FriField>(
     let rounds = params.rounds();
     let expected_queries = params.num_queries.min((n / 2).max(1));
     if rounds == 0
+        || expected_queries < MIN_QUERIES
         || proof.layer_roots.len() != rounds
         || proof.final_layer.len() != params.blowup
         || proof.queries.len() != expected_queries

@@ -707,13 +707,17 @@ fn verify_inner(
         }
 
         let point_low = domain.shift.mul(domain.omega_n.pow(p as u64));
+        let vanish_low = point_low.pow(domain.n as u64).sub(Felt::ONE);
+        if vanish_low == Felt::ZERO || boundary_points.contains(&point_low) {
+            return false;
+        }
         let recomputed_low = composition_value(
             air,
             &weights,
             &challenges,
             point_low,
             last_point,
-            point_low.pow(domain.n as u64).sub(Felt::ONE).inv(),
+            vanish_low.inv(),
             &boundary_inverses(point_low, &boundary_points),
             &opening.rows[0].values,
             &opening.rows[1].values,
@@ -723,13 +727,17 @@ fn verify_inner(
         }
 
         let point_high = domain.shift.mul(domain.omega_n.pow((p + half) as u64));
+        let vanish_high = point_high.pow(domain.n as u64).sub(Felt::ONE);
+        if vanish_high == Felt::ZERO || boundary_points.contains(&point_high) {
+            return false;
+        }
         let recomputed_high = composition_value(
             air,
             &weights,
             &challenges,
             point_high,
             last_point,
-            point_high.pow(domain.n as u64).sub(Felt::ONE).inv(),
+            vanish_high.inv(),
             &boundary_inverses(point_high, &boundary_points),
             &opening.rows[2].values,
             &opening.rows[3].values,

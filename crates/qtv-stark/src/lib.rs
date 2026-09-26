@@ -16,6 +16,7 @@ pub mod challenge_ball;
 pub mod codec;
 pub mod decompose;
 pub mod encode;
+#[cfg(test)]
 pub mod entry;
 pub mod examples;
 pub mod field;
