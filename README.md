@@ -33,6 +33,14 @@ The fused certificate joins the hashing and the signature arithmetic into one pr
 
 A second arithmetization proves not that a signature verifies but that it is the canonical one, the output of ML-DSA-65 signing with the per signature randomizer fixed at zero. That is what gives the sortition draw its grinding resistance, since a hedged signature would verify just as well but is not canonical.
 
+### The zero knowledge VRF, kept on show and not used
+
+The `zkvrf` module is a verifiable random function proven in zero knowledge. It hashes a secret key and a public input through a Rescue sponge and proves the output is right without revealing the key. It is complete and tested, and it stays in the repository as a record of the path that was built and weighed.
+
+The running chain does not use it. A single draw takes about eight seconds to prove on an Apple M4, and a Quantova block lands every second on 150 millisecond slots, so a proof per draw would hold every block back many times over. The chain draws its randomness from the hash based PQR construction instead, which needs no proof at all and keeps block time and finality where they are. Nothing in the chain, the oracle, or consensus calls this module.
+
+No key of any kind is stored in the repository. The key a caller passes in is used only for the length of one proof, and every state derived from it is wiped from memory once the proof is made. The key in the module tests is a fixed dummy value that exists only so the tests can run.
+
 ## Performance shape
 
 Verification is designed to be far cheaper than proving, the asymmetry the consensus and light client paths depend on. A benchmark harness lives beside the code and reproduces with `cargo bench` for anyone building locally.
