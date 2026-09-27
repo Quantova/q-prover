@@ -7,4 +7,4 @@ on:
   workflow_dispatch:
 jobs:
   ci:
-    uses: Quantova/Quantova-Ci/.github/workflows/rust-ci.yml@2b5ad1b2400acd435df40e7f26943ef737b477d8
+    uses: Quantova/Quantova-Ci/.github/workflows/rust-ci.yml@f2a7a9c5bee34b20876b110ba903d0008b9e90d1
