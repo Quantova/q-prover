@@ -358,7 +358,7 @@ pub fn verify_with_domain<F: FriField>(
     transcript: &mut Transcript,
 ) -> bool {
     let n = params.domain_size();
-    if !params.blowup.is_power_of_two() {
+    if !params.blowup.is_power_of_two() || params.blowup < 2 {
         return false;
     }
     let rounds = params.rounds();
