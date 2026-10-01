@@ -440,11 +440,13 @@ mod tests {
     #[test]
     fn the_signing_jobs_are_benchmark_parameters_not_deployable_ones() {
         for job in signing_jobs() {
-            let n = job.prover.length();
-            let size = n * job.blowup;
-            let bound = job.prover.max_degree().next_power_of_two() * n;
-            let fri_blowup = size / bound;
-            let bits = job.queries as f64 * 0.5 * (fri_blowup as f64).log2();
+            let bits = crate::stark::composition_soundness_bits(
+                job.prover.max_degree(),
+                &StarkParams {
+                    lde_blowup: job.blowup,
+                    num_queries: job.queries,
+                },
+            );
             assert!(
                 bits <= SIGNING_JOB_MAX_SOUNDNESS_BITS,
                 "{} claims {bits} bits, so it is no longer a benchmark parameter set",

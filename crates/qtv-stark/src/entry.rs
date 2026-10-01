@@ -270,14 +270,9 @@ mod tests {
         let message = b"soundness parameter probe over a cert";
         let output = shake_output(SHAKE256_RATE, segments, message);
         let air = certificate_air(segments, message, &output);
-        let n = air.length();
-        let size = n * CERT_BLOWUP;
-        let comp_bound = air.max_degree().next_power_of_two() * n;
-        let comp_fri_blowup = size / comp_bound;
-        let rate = 1.0 / comp_fri_blowup as f64;
-        let bits = CERT_QUERIES as f64 * -((1.0 + rate) / 2.0).log2();
+        let bits = crate::stark::composition_soundness_bits(air.max_degree(), &params());
         assert!(
-            bits >= 128.0,
+            bits >= crate::stark::SOUNDNESS_FLOOR_BITS,
             "certificate composition soundness {bits} bits below target under unique decoding"
         );
     }

@@ -485,7 +485,22 @@ fn shape_fits(
         && proof.trace_openings.len() == proof.trace_fri.queries.len()
 }
 
-pub fn proof_shape_fits(
+pub const SOUNDNESS_FLOOR_BITS: f64 = 128.0;
+
+pub fn composition_soundness_bits(max_degree: usize, params: &StarkParams) -> f64 {
+    let factor = max_degree.next_power_of_two();
+    if factor == 0 || params.lde_blowup < factor {
+        return 0.0;
+    }
+    let fri_blowup = params.lde_blowup / factor;
+    if fri_blowup < 2 {
+        return 0.0;
+    }
+    let rate = 1.0 / fri_blowup as f64;
+    params.num_queries as f64 * -((1.0 + rate) / 2.0).log2()
+}
+
+fn proof_shape_is_structural(
     length: usize,
     max_degree: usize,
     params: &StarkParams,
@@ -501,6 +516,16 @@ pub fn proof_shape_fits(
     }
     let domain = Domain::with_shape(length, max_degree, params);
     shape_fits(&domain, domain.lde_blowup, params.num_queries, proof)
+}
+
+pub fn proof_shape_fits(
+    length: usize,
+    max_degree: usize,
+    params: &StarkParams,
+    proof: &StarkProof,
+) -> bool {
+    proof_shape_is_structural(length, max_degree, params, proof)
+        && composition_soundness_bits(max_degree, params) >= SOUNDNESS_FLOOR_BITS
 }
 
 fn mask_openings_verify(
@@ -1232,11 +1257,11 @@ mod tests {
                 num_queries: starved,
             };
             assert!(
-                !proof_shape_fits(length, air.max_degree(), &weak, &proof),
+                !proof_shape_is_structural(length, air.max_degree(), &weak, &proof),
                 "a parameter set with {starved} queries proves nothing and must be refused"
             );
         }
-        assert!(proof_shape_fits(
+        assert!(proof_shape_is_structural(
             length,
             air.max_degree(),
             &params(),
