@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::air::{Air, TraceTable};
-use crate::field::{root_of_unity, Felt, GENERATOR};
+use crate::field::{root_of_unity, Felt, GENERATOR, TWO_ADICITY};
 use crate::field_ext::Fp3;
 use crate::fri::{self, FriParams, FriProof, Transcript};
 use crate::merkle::{hash_row, Digest, MerkleProof, MerkleTree};
@@ -596,6 +596,9 @@ pub fn verify_with_domain(
     proof: &StarkProof,
     context: &[u8],
 ) -> bool {
+    if !proof_shape_is_structural(air.length(), air.max_degree(), params, proof) {
+        return false;
+    }
     let domain = Domain::new(air, params);
     let trace_fri_blowup = domain.lde_blowup;
     verify_inner(
@@ -970,8 +973,38 @@ pub fn prove_zk(
     )
 }
 
+fn zk_shape_is_structural(air: &Air, params: &ZkParams) -> bool {
+    let n = air.length();
+    if !n.is_power_of_two()
+        || !params.lde_blowup.is_power_of_two()
+        || params.lde_blowup < 2
+        || params.num_queries < MIN_QUERIES
+    {
+        return false;
+    }
+    let log_size = n.trailing_zeros() + params.lde_blowup.trailing_zeros();
+    if log_size > TWO_ADICITY {
+        return false;
+    }
+    let size = 1usize << log_size;
+    let trace_bound = (n + params.blind).next_power_of_two();
+    let comp_bound = (air.max_degree() * (n + params.blind)).next_power_of_two();
+    if trace_bound == 0 || comp_bound == 0 {
+        return false;
+    }
+    let trace_fri_blowup = size / trace_bound;
+    let comp_fri_blowup = size / comp_bound;
+    trace_fri_blowup >= 2
+        && trace_fri_blowup.is_power_of_two()
+        && comp_fri_blowup >= 2
+        && comp_fri_blowup.is_power_of_two()
+}
+
 pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8]) -> bool {
     if air.aux_width() != 0 {
+        return false;
+    }
+    if !zk_shape_is_structural(air, params) {
         return false;
     }
     let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);

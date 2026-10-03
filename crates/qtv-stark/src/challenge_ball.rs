@@ -43,7 +43,7 @@ fn recompose(row: &[Felt], base: usize, bits: usize) -> Felt {
 pub fn sign_word(stream: &[u8]) -> u64 {
     let mut signs = 0u64;
     for i in 0..SIGN_BYTES {
-        signs |= (stream[i] as u64) << (8 * i);
+        signs |= (*stream.get(i).unwrap_or(&0) as u64) << (8 * i);
     }
     signs
 }
@@ -56,7 +56,10 @@ pub fn sample_in_ball(stream: &[u8]) -> Vec<i64> {
     let mut i = START;
     while i < RING_DEGREE {
         let j = loop {
-            let b = stream[pos] as usize;
+            let Some(&byte) = stream.get(pos) else {
+                return c;
+            };
+            let b = byte as usize;
             pos += 1;
             if b <= i {
                 break b;

@@ -92,7 +92,7 @@ pub fn eval_at(coeffs: &[Felt], point: Felt) -> Felt {
 }
 
 pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
-    debug_assert!(
+    assert!(
         values.iter().all(|v| *v != Felt::ZERO),
         "a zero poisons every inverse in the batch"
     );
@@ -110,6 +110,13 @@ pub fn batch_inverse(values: &[Felt]) -> Vec<Felt> {
         inverse = inverse.mul(values[i]);
     }
     out
+}
+
+pub fn try_batch_inverse(values: &[Felt]) -> Option<Vec<Felt>> {
+    if values.contains(&Felt::ZERO) {
+        return None;
+    }
+    Some(batch_inverse(values))
 }
 
 pub fn batch_inverse_ext(values: &[Fp3]) -> Vec<Fp3> {

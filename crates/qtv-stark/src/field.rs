@@ -53,8 +53,16 @@ impl Felt {
     }
 
     pub fn inv(self) -> Felt {
-        debug_assert!(self != Felt::ZERO, "zero has no inverse");
+        assert!(self != Felt::ZERO, "zero has no inverse");
         self.pow(MODULUS - 2)
+    }
+
+    pub fn try_inv(self) -> Option<Felt> {
+        if self == Felt::ZERO {
+            None
+        } else {
+            Some(self.pow(MODULUS - 2))
+        }
     }
 }
 
