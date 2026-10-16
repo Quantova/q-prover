@@ -10,14 +10,10 @@
 #![allow(clippy::assertions_on_constants)]
 
 pub mod air;
-pub mod batch;
-pub mod certificate;
 pub mod challenge_ball;
 pub mod codec;
 pub mod decompose;
 pub mod encode;
-#[cfg(test)]
-pub mod entry;
 pub mod examples;
 pub mod field;
 pub mod field_ext;
@@ -33,7 +29,6 @@ pub mod prover;
 pub mod qudros;
 pub mod rescue;
 pub mod sample;
-pub mod signing;
 pub mod sponge;
 pub mod stark;
 pub mod verifier;

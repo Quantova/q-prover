@@ -16,14 +16,6 @@ name = "backend"
 harness = false
 
 [[bench]]
-name = "batch"
-harness = false
-
-[[bench]]
-name = "certificate"
-harness = false
-
-[[bench]]
 name = "general"
 harness = false
 
@@ -45,10 +37,6 @@ harness = false
 
 [[bench]]
 name = "sampling"
-harness = false
-
-[[bench]]
-name = "signing"
 harness = false
 
 [[bench]]

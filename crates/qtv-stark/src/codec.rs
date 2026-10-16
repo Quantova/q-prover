@@ -281,8 +281,9 @@ pub fn decode_proof(bytes: &[u8]) -> Option<StarkProof> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::certificate::certificate_trace;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::examples::squaring_chain;
+    use crate::field::Felt;
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     fn params() -> StarkParams {
         StarkParams {
@@ -292,16 +293,9 @@ mod tests {
     }
 
     fn sample_proof() -> (crate::air::Air, StarkProof) {
-        let hints: Vec<u64> = (0..2u64).map(|i| i & 1).collect();
-        let responses = [11_111u64, 22_222];
-        let cert = certificate_trace(2, b"module lattice codec round trip", &hints, &responses);
-        let proof = prove(&cert.air, &cert.trace, &params());
-        let air = crate::certificate::certificate_air(
-            2,
-            b"module lattice codec round trip",
-            &cert.output,
-        );
-        (air, proof)
+        let chain = squaring_chain(6, Felt::new(7));
+        let proof = prove(&chain.air, &chain.trace, &params());
+        (chain.air, proof)
     }
 
     #[test]

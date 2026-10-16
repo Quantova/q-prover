@@ -1,58 +1,55 @@
 # q-prover
 
-The hash based STARK proving system for Quantova. It proves statements about the chain, above all that a batch of module lattice signatures verify, and it produces a certificate a light client can check. Every proof rests on hashing alone. There is no pairing and no elliptic curve operation anywhere in this system.
-
-Quantova is a sovereign post quantum Layer 1 with only NIST standardized schemes and no classical escape hatch anywhere. A proving system is where most chains reach for an elliptic curve. Quantova does not. The soundness here comes from a collision resistant hash and a low degree test over a prime field, so the proof stands on the same footing as the rest of the stack.
+The hash based STARK proving system for Quantova. Every proof rests on hashing alone. There is no pairing and no elliptic curve operation anywhere in this system.
 
 ## What it is
 
-`qtv-stark` is the backend. It carries a prime field, Merkle commitments over SHA-3, the FRI low degree test, and a constraint framework, and on top of those it arithmetizes the module lattice signature so that a proof can attest the signature relation without revealing or re running it.
-
-### The proof backend
+`qtv-stark` is the backend. It carries a prime field, Merkle commitments over SHA-3, the FRI low degree test and a constraint framework.
 
 - Field and transforms. Arithmetic over the Goldilocks prime with a number theoretic transform for interpolation and evaluation.
 - Commitments. A Merkle tree that commits an extended trace row under one leaf, so a single path opens a whole row.
-- Low degree test. FRI folds an evaluation vector round by round against challenges drawn from a SHA-3 transcript, which makes the protocol non interactive.
-- Constraints. The AIR framework writes a computation as a trace of field cells with transition, single row, and boundary constraints, and a permutation argument that lets a value written in one row be consumed in a distant row. The prover interpolates each column, extends it onto a coset, commits it, forms one composition, and hands that to FRI. The verifier replays the transcript, runs the low degree test, checks the openings against the committed roots, and recomputes the composition from the opened cells.
+- Low degree test. FRI folds an evaluation vector round by round against challenges drawn from a SHA-3 transcript, which makes the protocol non interactive. The `prover` and `verifier` modules are thin wrappers that run this low degree test on its own.
+- Constraints. The AIR framework writes a computation as a trace of field cells with transition, single row and boundary constraints, and a permutation argument that lets a value written in one row be consumed in a distant row. The prover interpolates each column, extends it onto a coset, commits it, forms one composition and hands that to FRI. The verifier replays the transcript, runs the low degree test, checks the openings against the committed roots and recomputes the composition from the opened cells.
 
-The backend is exercised by round trip tests that prove and verify a correct trace, and by negative tests that reject a broken transition, a broken boundary, a tampered opening, a tampered root, a mismatched verifier, and a broken permutation.
+## Statement binding and soundness
 
-### The module lattice arithmetization
+The transcript absorbs the full statement before any challenge is drawn. That is the trace length and widths, every boundary value, the public bytes, the evaluation domain, the blow up factors, the query count, whether the trace is masked, and the degree and shape of every transition and permutation constraint. A proof therefore cannot be replayed under other parameters or against a circuit of another shape, and a caller may add its own domain tag through `verify_with_domain`.
 
-The signature verify relation of ML-DSA-65 from FIPS 204 is broken into gadgets, each with its own reject tests.
+`verify`, `verify_with_domain` and `verify_zk` refuse any parameter set whose composition soundness falls below 128 bits, and any domain larger than the two adic subgroup of the field. A caller cannot lower the bar by passing weaker parameters.
 
-- The SHA-3 permutation, named Qudros here, is arithmetized round by round, matching the crypto crate sponge on known inputs.
-- The transform domain modular multiplication over the signature modulus, the atomic step of the verify relation.
-- The response infinity norm range check, which rejects a response outside the FIPS 204 band.
+## Gadgets
+
+The repository holds standalone arithmetizations of pieces of the ML-DSA-65 verify relation from FIPS 204. Each is a self contained AIR with its own reject tests.
+
+- The SHA-3 permutation, named Qudros here, arithmetized round by round and matched against the crypto crate sponge.
+- Modular multiplication in the transform domain over the signature modulus.
+- The response infinity norm range check.
 - The commitment high and low bit decomposition and the hint recovery on top of it.
-- The rejection sampling of the matrix coefficients below the modulus, RejNTTPoly, and the challenge ball sampling of the sparse challenge.
+- The rejection sampling of matrix coefficients and the challenge ball sampling, with every sampled byte range checked.
 
-### The certificate
+These gadgets are building blocks. No module in this repository proves that a signature verifies, and no other part of the stack relies on one. An earlier batch certificate that claimed to do so was removed because it did not bind the signature relation.
 
-The fused certificate joins the hashing and the signature arithmetic into one proof. A single flat trace carries a SHAKE256 sponge band next to the per coefficient arithmetic band, and gated equalities and permutation arguments bind them so a prover cannot feed the arithmetic a coefficient the hash did not produce. The chain from the hash output, to the matrix coefficient, to the matrix vector product, to the response the norm bounds, cannot be split. The `entry` module wraps this as `prove_batch` and `verify_batch` over a public message, and the certificate travels as bytes for a light client to check, the same wrapper consensus and the QONCORD tally ride on.
+## The zero knowledge VRF, kept and not used
 
-A second arithmetization proves not that a signature verifies but that it is the canonical one, the output of ML-DSA-65 signing with the per signature randomizer fixed at zero. That is what gives the sortition draw its grinding resistance, since a hedged signature would verify just as well but is not canonical.
+The `zkvrf` module is a verifiable random function proven in zero knowledge. It hashes a secret key and a public input through a Rescue sponge and proves the output is right without revealing the key. It is complete and tested and meets the same 128 bit floor. Nothing in the chain, the oracle or consensus calls it. The chain selects its validators deterministically and needs no proof per block.
 
-### The zero knowledge VRF, kept on show and not used
+No key of any kind is stored in the repository. The key a caller passes in is used only for the length of one proof, and every state derived from it is wiped from memory once the proof is made.
 
-The `zkvrf` module is a verifiable random function proven in zero knowledge. It hashes a secret key and a public input through a Rescue sponge and proves the output is right without revealing the key. It is complete and tested, and it stays in the repository as a record of the path that was built and weighed.
+## Build and test
 
-The running chain does not use it. A single draw takes about eight seconds to prove on an Apple M4, and a Quantova block lands every second on 150 millisecond slots, so a proof per draw would hold every block back many times over. The chain draws its randomness from the hash based PQR construction instead, which needs no proof at all and keeps block time and finality where they are. Nothing in the chain, the oracle, or consensus calls this module.
-
-No key of any kind is stored in the repository. The key a caller passes in is used only for the length of one proof, and every state derived from it is wiped from memory once the proof is made. The key in the module tests is a fixed dummy value that exists only so the tests can run.
-
-## Performance shape
-
-Verification is designed to be far cheaper than proving, the asymmetry the consensus and light client paths depend on. A benchmark harness lives beside the code and reproduces with `cargo bench` for anyone building locally.
+```
+cargo test --release
+cargo bench
+```
 
 ## Maturity
 
-This is an active, early implementation, version 0.1.0, a single crate that depends on Q-Crypto for the SHA-3 and SHAKE primitives. The backend and the individual arithmetization gadgets are in place and tested. The fused certificate binds the hashing to the arithmetic at a batch of 16 coefficients today, and the work in progress is scaling that band to the full per signature coefficient count and folding in the remaining sampling gadgets, which widens the trace but keeps the same shape and binding. It is a from scratch reference implementation and has not been through an independent security audit.
+Version 0.1.0, a single crate that depends on Q-Crypto for the SHA-3 and SHAKE primitives. It is a from scratch reference implementation.
 
 ## Cryptography
 
-The proof system rests on SHA-3 and SHAKE from FIPS 202 and a prime field low degree test, with no pairing and no elliptic curve. It arithmetizes ML-DSA-65 from FIPS 204. The stack cryptography is validated against the NIST vectors and is not audited, and the chain is at testnet.
+The proof system rests on SHA-3 and SHAKE from FIPS 202 and a prime field low degree test, with no pairing and no elliptic curve. The stack cryptography is validated against the NIST vectors.
 
 ## Governance and license
 
-Governed by the crypto policy, POLICY-crypto, in the Quantova-Specs repository. Commits are authored by the owner only. Dual licensed under Apache 2.0 and MIT.
+Governed by the crypto policy, POLICY-crypto, in the Quantova-Specs repository. Dual licensed under Apache 2.0 and MIT.
