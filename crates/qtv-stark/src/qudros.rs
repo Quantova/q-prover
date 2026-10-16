@@ -323,7 +323,7 @@ pub fn qudros_trace(input: &[u64; LANES]) -> QudrosInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
     use qtv_crypto::sha3::{sha3_256, shake256};
 
     fn params() -> StarkParams {

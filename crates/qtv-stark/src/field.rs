@@ -3,6 +3,29 @@
 
 pub const MODULUS: u64 = 18446744069414584321;
 
+const EPSILON: u64 = 0xffff_ffff;
+
+#[inline]
+fn canonical(value: u64) -> u64 {
+    let (reduced, borrow) = value.overflowing_sub(MODULUS);
+    let keep = (borrow as u64).wrapping_neg();
+    (value & keep) | (reduced & !keep)
+}
+
+#[inline]
+fn reduce128(x: u128) -> u64 {
+    let lo = x as u64;
+    let hi = (x >> 64) as u64;
+    let hi_hi = hi >> 32;
+    let hi_lo = hi & EPSILON;
+    let (t0, borrow) = lo.overflowing_sub(hi_hi);
+    let t0 = t0.wrapping_sub(EPSILON & (borrow as u64).wrapping_neg());
+    let t1 = hi_lo * EPSILON;
+    let (t2, carry) = t0.overflowing_add(t1);
+    let t2 = t2.wrapping_add(EPSILON & (carry as u64).wrapping_neg());
+    canonical(t2)
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Felt(u64);
 
@@ -12,7 +35,7 @@ impl Felt {
     pub const ONE: Felt = Felt(1);
 
     pub fn new(value: u64) -> Self {
-        Felt(value % MODULUS)
+        Felt(canonical(value))
     }
 
     pub fn to_u64(self) -> u64 {
@@ -20,23 +43,18 @@ impl Felt {
     }
 
     pub fn add(self, other: Felt) -> Felt {
-        let sum = (self.0 as u128) + (other.0 as u128);
-        Felt((sum % (MODULUS as u128)) as u64)
+        let (sum, carry) = self.0.overflowing_add(other.0);
+        let sum = sum.wrapping_add(EPSILON & (carry as u64).wrapping_neg());
+        Felt(canonical(sum))
     }
 
     pub fn sub(self, other: Felt) -> Felt {
         let (diff, borrow) = self.0.overflowing_sub(other.0);
-        let reduced = if borrow {
-            diff.wrapping_add(MODULUS)
-        } else {
-            diff
-        };
-        Felt(reduced)
+        Felt(diff.wrapping_add(MODULUS & (borrow as u64).wrapping_neg()))
     }
 
     pub fn mul(self, other: Felt) -> Felt {
-        let product = (self.0 as u128) * (other.0 as u128);
-        Felt((product % (MODULUS as u128)) as u64)
+        Felt(reduce128((self.0 as u128) * (other.0 as u128)))
     }
 
     pub fn pow(self, mut exponent: u64) -> Felt {
@@ -78,6 +96,47 @@ pub fn root_of_unity(log_n: u32) -> Felt {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_reductions_agree_with_the_remainder_everywhere_they_are_tested() {
+        let p = MODULUS as u128;
+        let edges = [
+            0u64,
+            1,
+            2,
+            EPSILON,
+            EPSILON + 1,
+            MODULUS - 2,
+            MODULUS - 1,
+            MODULUS,
+            MODULUS + 1,
+            u64::MAX - 1,
+            u64::MAX,
+            1 << 63,
+            (1 << 32) - 2,
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut values: Vec<u64> = edges.to_vec();
+        for _ in 0..4_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            values.push(state);
+        }
+        for &a in &values {
+            assert_eq!(Felt::new(a).to_u64() as u128, a as u128 % p);
+        }
+        for &a in &values {
+            for &b in values.iter().take(300) {
+                let fa = Felt::new(a);
+                let fb = Felt::new(b);
+                let (ca, cb) = (fa.to_u64() as u128, fb.to_u64() as u128);
+                assert_eq!(fa.add(fb).to_u64() as u128, (ca + cb) % p);
+                assert_eq!(fa.sub(fb).to_u64() as u128, (ca + p - cb) % p);
+                assert_eq!(fa.mul(fb).to_u64() as u128, (ca * cb) % p);
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

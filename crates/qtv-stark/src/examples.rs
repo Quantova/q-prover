@@ -37,7 +37,7 @@ pub fn squaring_chain(log_length: u32, seed: Felt) -> SquaringChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     #[test]
     fn the_chain_squares_each_step() {

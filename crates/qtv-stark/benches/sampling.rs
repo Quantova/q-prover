@@ -97,7 +97,7 @@ fn main() {
     }
     let mut ball_stream = vec![0u8; BALL_BUFFER_BYTES];
     shake256(&c_tilde, &mut ball_stream);
-    let ball = ball_batch(&ball_stream);
+    let ball = ball_batch(&ball_stream).expect("a full stream");
     report(
         "challenge ball position sampling",
         &ball.air,

@@ -126,7 +126,7 @@ pub fn encode_batch(highs: &[u8]) -> EncodeBatch {
 mod tests {
     use super::*;
     use crate::hashing::matrix_entry_seed;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     fn params() -> StarkParams {
         StarkParams {

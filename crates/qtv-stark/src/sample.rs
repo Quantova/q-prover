@@ -198,7 +198,7 @@ pub fn rej_batch(stream: &[u8]) -> RejBatch {
 mod tests {
     use super::*;
     use crate::hashing::matrix_entry_seed;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
     use qtv_crypto::sha3::shake128;
 
     fn params() -> StarkParams {

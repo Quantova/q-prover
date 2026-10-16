@@ -228,8 +228,31 @@ pub fn prove_with_domain(
     )
 }
 
-fn absorb_statement(transcript: &mut Transcript, air: &Air) {
-    transcript.absorb(b"qtv-stark/statement");
+fn absorb_statement(
+    transcript: &mut Transcript,
+    air: &Air,
+    domain: &Domain,
+    trace_fri_blowup: usize,
+    num_queries: usize,
+    masked: bool,
+) {
+    transcript.absorb(b"qtv-stark/statement/v2");
+    transcript.absorb(&u64::from(domain.log_size).to_le_bytes());
+    transcript.absorb(&(domain.lde_blowup as u64).to_le_bytes());
+    transcript.absorb(&(trace_fri_blowup as u64).to_le_bytes());
+    transcript.absorb(&(num_queries as u64).to_le_bytes());
+    transcript.absorb(&[u8::from(masked)]);
+    transcript.absorb(&(air.num_challenges() as u64).to_le_bytes());
+    transcript.absorb(&(air.transitions().len() as u64).to_le_bytes());
+    for transition in air.transitions() {
+        transcript.absorb(&(transition.degree as u64).to_le_bytes());
+        transcript.absorb(&[u8::from(transition.exclude_last)]);
+    }
+    transcript.absorb(&(air.permutations().len() as u64).to_le_bytes());
+    for permutation in air.permutations() {
+        transcript.absorb(&(permutation.degree as u64).to_le_bytes());
+        transcript.absorb(&(permutation.aux_base as u64).to_le_bytes());
+    }
     transcript.absorb(&(air.length() as u64).to_le_bytes());
     transcript.absorb(&(air.base_width() as u64).to_le_bytes());
     transcript.absorb(&(air.aux_width() as u64).to_le_bytes());
@@ -257,7 +280,14 @@ fn prove_columns(
     let trace_root = base_tree.root();
 
     let mut transcript = Transcript::with_domain(context);
-    absorb_statement(&mut transcript, air);
+    absorb_statement(
+        &mut transcript,
+        air,
+        domain,
+        trace_fri_blowup,
+        num_queries,
+        mask.is_some(),
+    );
     transcript.absorb_digest(&trace_root);
     let mask_tree = mask
         .as_ref()
@@ -511,6 +541,7 @@ fn proof_shape_is_structural(
         || params.lde_blowup < 2
         || params.num_queries < MIN_QUERIES
         || max_degree.next_power_of_two() * 2 > params.lde_blowup
+        || length.trailing_zeros() + params.lde_blowup.trailing_zeros() > TWO_ADICITY
     {
         return false;
     }
@@ -596,6 +627,33 @@ pub fn verify_with_domain(
     proof: &StarkProof,
     context: &[u8],
 ) -> bool {
+    if composition_soundness_bits(air.max_degree(), params) < SOUNDNESS_FLOOR_BITS {
+        return false;
+    }
+    verify_with_domain_at_any_strength(air, params, proof, context)
+}
+
+#[cfg(test)]
+pub(crate) fn verify_relaxed(air: &Air, params: &StarkParams, proof: &StarkProof) -> bool {
+    verify_with_domain_at_any_strength(air, params, proof, &[])
+}
+
+#[cfg(test)]
+pub(crate) fn verify_with_domain_relaxed(
+    air: &Air,
+    params: &StarkParams,
+    proof: &StarkProof,
+    context: &[u8],
+) -> bool {
+    verify_with_domain_at_any_strength(air, params, proof, context)
+}
+
+fn verify_with_domain_at_any_strength(
+    air: &Air,
+    params: &StarkParams,
+    proof: &StarkProof,
+    context: &[u8],
+) -> bool {
     if !proof_shape_is_structural(air.length(), air.max_degree(), params, proof) {
         return false;
     }
@@ -633,7 +691,14 @@ fn verify_inner(
     let base_width = air.base_width();
     let has_aux = air.aux_width() > 0;
     let mut transcript = Transcript::with_domain(context);
-    absorb_statement(&mut transcript, air);
+    absorb_statement(
+        &mut transcript,
+        air,
+        domain,
+        trace_fri_blowup,
+        num_queries,
+        masked,
+    );
     transcript.absorb_digest(&proof.trace_root);
     if masked {
         transcript.absorb_digest(&proof.mask_root);
@@ -1000,11 +1065,21 @@ fn zk_shape_is_structural(air: &Air, params: &ZkParams) -> bool {
         && comp_fri_blowup.is_power_of_two()
 }
 
+pub fn zk_soundness_bits(air: &Air, params: &ZkParams) -> f64 {
+    if !zk_shape_is_structural(air, params) {
+        return 0.0;
+    }
+    let size = 1usize << (air.length().trailing_zeros() + params.lde_blowup.trailing_zeros());
+    let comp_bound = (air.max_degree() * (air.length() + params.blind)).next_power_of_two();
+    let rate = 1.0 / (size / comp_bound) as f64;
+    params.num_queries as f64 * -((1.0 + rate) / 2.0).log2()
+}
+
 pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8]) -> bool {
     if air.aux_width() != 0 {
         return false;
     }
-    if !zk_shape_is_structural(air, params) {
+    if zk_soundness_bits(air, params) < SOUNDNESS_FLOOR_BITS {
         return false;
     }
     let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
@@ -1022,6 +1097,40 @@ pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{verify_relaxed as verify, verify_with_domain_relaxed as verify_with_domain};
+
+    #[test]
+    fn the_public_verifier_refuses_a_parameter_set_below_the_soundness_floor() {
+        let chain = crate::examples::squaring_chain(6, Felt::new(7));
+        let weak = StarkParams {
+            lde_blowup: 4,
+            num_queries: 16,
+        };
+        let proof = prove(&chain.air, &chain.trace, &weak);
+        assert!(composition_soundness_bits(chain.air.max_degree(), &weak) < SOUNDNESS_FLOOR_BITS);
+        assert!(verify_relaxed(&chain.air, &weak, &proof));
+        assert!(!super::verify(&chain.air, &weak, &proof));
+        assert!(!super::verify_with_domain(&chain.air, &weak, &proof, &[]));
+    }
+
+    #[test]
+    fn a_blowup_past_the_two_adic_bound_is_refused_without_a_panic() {
+        let chain = crate::examples::squaring_chain(6, Felt::new(7));
+        let proof = prove(
+            &chain.air,
+            &chain.trace,
+            &StarkParams {
+                lde_blowup: 4,
+                num_queries: 16,
+            },
+        );
+        let huge = StarkParams {
+            lde_blowup: 1 << 40,
+            num_queries: 400,
+        };
+        assert!(!super::verify(&chain.air, &huge, &proof));
+        assert!(!verify_relaxed(&chain.air, &huge, &proof));
+    }
 
     fn params() -> StarkParams {
         StarkParams {

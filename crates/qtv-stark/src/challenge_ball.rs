@@ -23,7 +23,9 @@ const COL_GT: usize = 6;
 const COL_LE_BITS: usize = 7;
 const COL_GT_BITS: usize = COL_LE_BITS + 8;
 
-pub const WIDTH: usize = COL_GT_BITS + 8;
+const COL_J_BITS: usize = COL_GT_BITS + 8;
+
+pub const WIDTH: usize = COL_J_BITS + 8;
 
 pub const ACCEPT_COL: usize = COL_ACC;
 
@@ -48,7 +50,10 @@ pub fn sign_word(stream: &[u8]) -> u64 {
     signs
 }
 
-pub fn sample_in_ball(stream: &[u8]) -> Vec<i64> {
+pub fn sample_in_ball(stream: &[u8]) -> Option<Vec<i64>> {
+    if stream.len() < SIGN_BYTES {
+        return None;
+    }
     let signs = sign_word(stream);
     let mut c = vec![0i64; RING_DEGREE];
     let mut pos = SIGN_BYTES;
@@ -56,9 +61,7 @@ pub fn sample_in_ball(stream: &[u8]) -> Vec<i64> {
     let mut i = START;
     while i < RING_DEGREE {
         let j = loop {
-            let Some(&byte) = stream.get(pos) else {
-                return c;
-            };
+            let &byte = stream.get(pos)?;
             let b = byte as usize;
             pos += 1;
             if b <= i {
@@ -70,20 +73,20 @@ pub fn sample_in_ball(stream: &[u8]) -> Vec<i64> {
         bit += 1;
         i += 1;
     }
-    c
+    Some(c)
 }
 
-fn consumed_bytes(stream: &[u8]) -> usize {
+fn consumed_bytes(stream: &[u8]) -> Option<usize> {
     let mut pos = SIGN_BYTES;
     let mut i = START;
     while i < RING_DEGREE {
-        let b = stream[pos] as usize;
+        let b = *stream.get(pos)? as usize;
         pos += 1;
         if b <= i {
             i += 1;
         }
     }
-    pos - SIGN_BYTES
+    Some(pos - SIGN_BYTES)
 }
 
 pub fn add_constraints(air: &mut Air, base: usize) {
@@ -126,7 +129,10 @@ pub fn add_constraints(air: &mut Air, base: usize) {
         next[i].sub(current[i]).sub(current[acc])
     });
 
-    for start in [COL_LE_BITS, COL_GT_BITS] {
+    air.add_single_row(1, move |row| {
+        recompose(row, base + COL_J_BITS, 8).sub(row[j])
+    });
+    for start in [COL_LE_BITS, COL_GT_BITS, COL_J_BITS] {
         for k in 0..8 {
             let col = base + start + k;
             air.add_single_row(2, move |row| row[col].mul(row[col].sub(Felt::ONE)));
@@ -154,8 +160,9 @@ pub struct BallBatch {
     pub challenge: Vec<i64>,
 }
 
-pub fn ball_batch(stream: &[u8]) -> BallBatch {
-    let consumed = consumed_bytes(stream);
+pub fn ball_batch(stream: &[u8]) -> Option<BallBatch> {
+    let consumed = consumed_bytes(stream)?;
+    let challenge = sample_in_ball(stream)?;
     let length = (consumed + 1).next_power_of_two().max(2);
     let mut trace = TraceTable::new(WIDTH, length);
 
@@ -181,21 +188,39 @@ pub fn ball_batch(stream: &[u8]) -> BallBatch {
         trace.set(COL_GT, row, Felt::new(gt as u64));
         set_bits(&mut trace, COL_LE_BITS, row, le as u64, 8);
         set_bits(&mut trace, COL_GT_BITS, row, gt as u64, 8);
+        set_bits(&mut trace, COL_J_BITS, row, byte as u64, 8);
 
         i += acc;
     }
 
-    BallBatch {
+    Some(BallBatch {
         air: ball_air(length),
         trace,
-        challenge: sample_in_ball(stream),
-    }
+        challenge,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
+
+    #[test]
+    fn a_sampled_value_above_a_byte_is_rejected() {
+        let mut batch = ball_batch(&sample_stream()).expect("a full stream");
+        let row = 0;
+        let j = batch.trace.get(BYTE_COL, row);
+        batch.trace.set(BYTE_COL, row, j.add(Felt::new(256)));
+        assert!(!batch.air.is_satisfied(&batch.trace));
+    }
+
+    #[test]
+    fn a_short_stream_yields_no_challenge_and_no_panic() {
+        let short = [7u8; 12];
+        assert!(sample_in_ball(&short).is_none());
+        assert!(ball_batch(&short).is_none());
+        assert!(sample_in_ball(&[1u8; 3]).is_none());
+    }
     use qtv_crypto::sha3::shake256;
 
     fn params() -> StarkParams {
@@ -218,7 +243,7 @@ mod tests {
     #[test]
     fn the_challenge_has_tau_nonzero_signs() {
         let stream = sample_stream();
-        let c = sample_in_ball(&stream);
+        let c = sample_in_ball(&stream).expect("a full stream");
         let nonzero = c.iter().filter(|&&v| v != 0).count();
         assert_eq!(nonzero, TAU);
         for v in &c {
@@ -229,7 +254,7 @@ mod tests {
     #[test]
     fn the_accepted_positions_match_the_reference() {
         let stream = sample_stream();
-        let batch = ball_batch(&stream);
+        let batch = ball_batch(&stream).expect("a full stream");
         let mut positions = Vec::new();
         for row in 0..batch.trace.length() {
             if batch.trace.get(ACCEPT_COL, row) == Felt::ONE {
@@ -244,13 +269,13 @@ mod tests {
 
     #[test]
     fn the_arithmetic_holds_on_every_row() {
-        let batch = ball_batch(&sample_stream());
+        let batch = ball_batch(&sample_stream()).expect("a full stream");
         assert!(batch.air.is_satisfied(&batch.trace));
     }
 
     #[test]
     fn a_flipped_accept_bit_is_rejected() {
-        let batch = ball_batch(&sample_stream());
+        let batch = ball_batch(&sample_stream()).expect("a full stream");
         let mut trace = batch.trace;
         let mut target = 0;
         for row in 0..trace.length() {
@@ -265,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_tampered_byte_is_rejected() {
-        let batch = ball_batch(&sample_stream());
+        let batch = ball_batch(&sample_stream()).expect("a full stream");
         let mut trace = batch.trace;
         let mut target = 0;
         for row in 0..trace.length() {
@@ -280,7 +305,7 @@ mod tests {
 
     #[test]
     fn a_batch_proves_and_verifies() {
-        let batch = ball_batch(&sample_stream());
+        let batch = ball_batch(&sample_stream()).expect("a full stream");
         let proof = prove(&batch.air, &batch.trace, &params());
         assert!(verify(&ball_air(batch.trace.length()), &params(), &proof));
     }

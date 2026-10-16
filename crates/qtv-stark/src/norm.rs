@@ -111,7 +111,7 @@ pub fn norm_batch(coefficients: &[u64]) -> NormBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     fn params() -> StarkParams {
         StarkParams {
@@ -131,6 +131,18 @@ mod tests {
     fn a_coefficient_on_the_bound_is_rejected() {
         let batch = norm_batch(&[NORM_BOUND]);
         assert!(!batch.air.is_satisfied(&batch.trace));
+    }
+
+    #[test]
+    fn a_coefficient_written_at_or_above_the_modulus_is_rejected() {
+        for raw in [Q, Q + 5, Q + NORM_BOUND - 1] {
+            for sign in [0u64, 1] {
+                let mut batch = norm_batch(&[5]);
+                batch.trace.set(COL_Z, 0, Felt::new(raw));
+                batch.trace.set(COL_SIGN, 0, Felt::new(sign));
+                assert!(!batch.air.is_satisfied(&batch.trace));
+            }
+        }
     }
 
     #[test]

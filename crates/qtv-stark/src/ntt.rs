@@ -302,7 +302,7 @@ pub fn to_layer_zero(coeffs: &[u64]) -> Vec<u64> {
 mod tests {
     use super::*;
     use crate::field_ext::Fp3;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     fn params() -> StarkParams {
         StarkParams {

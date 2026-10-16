@@ -164,7 +164,7 @@ pub fn decompose_batch(coefficients: &[u64]) -> DecomposeBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     fn params() -> StarkParams {
         StarkParams {

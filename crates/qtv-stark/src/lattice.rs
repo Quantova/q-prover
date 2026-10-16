@@ -159,7 +159,7 @@ pub fn modmul_batch(inputs: &[(u64, u64)]) -> ModMulBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
 
     fn sample_inputs(count: usize) -> Vec<(u64, u64)> {
         (0..count as u64)

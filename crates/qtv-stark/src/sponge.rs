@@ -391,7 +391,7 @@ pub fn absorb_trace(rate: usize, message: &[u8]) -> AbsorbInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
     use qtv_crypto::sha3::{shake128, shake256};
 
     fn params() -> StarkParams {

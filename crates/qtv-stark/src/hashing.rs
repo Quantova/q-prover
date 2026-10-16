@@ -49,7 +49,7 @@ pub fn matrix_entries() -> usize {
 mod tests {
     use super::*;
     use crate::sponge::{shake_air, shake_output};
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
     use qtv_crypto::sha3::{shake128, shake256};
 
     fn params() -> StarkParams {

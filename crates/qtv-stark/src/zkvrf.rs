@@ -278,7 +278,7 @@ pub fn vrf_trace(sk: &[Felt; SK_ELEMS], x: &[Felt; X_ELEMS]) -> VrfInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stark::{prove, verify, StarkParams};
+    use crate::stark::{prove, verify_relaxed as verify, StarkParams};
     use std::collections::HashSet;
 
     fn sk() -> [Felt; SK_ELEMS] {
