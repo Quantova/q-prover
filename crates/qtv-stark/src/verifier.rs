@@ -43,7 +43,7 @@ mod tests {
     fn a_low_degree_witness_round_trips_through_the_interfaces() {
         let params = FriParams {
             log_domain_size: 10,
-            num_queries: 16,
+            num_queries: 192,
             blowup: 4,
         };
         let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
@@ -61,7 +61,7 @@ mod tests {
     fn a_high_degree_witness_fails_the_interfaces() {
         let params = FriParams {
             log_domain_size: 10,
-            num_queries: 16,
+            num_queries: 192,
             blowup: 4,
         };
         let coeffs: Vec<Felt> = (0..params.domain_size() as u64).map(Felt::new).collect();

@@ -1,7 +1,7 @@
 // Copyright 2026 Quantova Inc
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use crate::field::{root_of_unity, Felt, MODULUS};
+use crate::field::{root_of_unity, Felt, MODULUS, TWO_ADICITY};
 use crate::field_ext::Fp3;
 use crate::merkle::{Digest, MerkleProof, MerkleTree};
 use qtv_crypto::sha3::sha3_256;
@@ -212,7 +212,7 @@ fn commit_layer<F: FriField>(values: &[F]) -> MerkleTree {
 }
 
 pub fn shape_is_admissible<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
-    if !params.blowup.is_power_of_two() {
+    if params.log_domain_size > TWO_ADICITY || !params.blowup.is_power_of_two() {
         return false;
     }
     let rounds = params.rounds();
@@ -352,15 +352,35 @@ pub fn verify<F: FriField>(params: &FriParams, proof: &FriProof<F>) -> bool {
     verify_with_domain(params, proof, &mut transcript)
 }
 
+pub fn soundness_bits(params: &FriParams) -> f64 {
+    if !params.blowup.is_power_of_two() || params.blowup < 2 {
+        return 0.0;
+    }
+    let rate = 1.0 / params.blowup as f64;
+    params.num_queries as f64 * -((1.0 + rate) / 2.0).log2()
+}
+
 pub fn verify_with_domain<F: FriField>(
     params: &FriParams,
     proof: &FriProof<F>,
     transcript: &mut Transcript,
 ) -> bool {
-    let n = params.domain_size();
-    if !params.blowup.is_power_of_two() || params.blowup < 2 {
+    if soundness_bits(params) < crate::stark::SOUNDNESS_FLOOR_BITS {
         return false;
     }
+    verify_in_transcript(params, proof, transcript)
+}
+
+pub(crate) fn verify_in_transcript<F: FriField>(
+    params: &FriParams,
+    proof: &FriProof<F>,
+    transcript: &mut Transcript,
+) -> bool {
+    if params.log_domain_size > TWO_ADICITY || !params.blowup.is_power_of_two() || params.blowup < 2
+    {
+        return false;
+    }
+    let n = params.domain_size();
     let rounds = params.rounds();
     let expected_queries = params.num_queries.min((n / 2).max(1));
     if rounds == 0
@@ -587,7 +607,7 @@ mod tests {
     fn sample_params() -> FriParams {
         FriParams {
             log_domain_size: 10,
-            num_queries: 24,
+            num_queries: 156,
             blowup: 8,
         }
     }

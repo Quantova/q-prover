@@ -734,11 +734,11 @@ fn verify_inner(
     } else {
         Fp3::ZERO
     };
-    if !fri::verify_with_domain(&trace_fri_params, &proof.trace_fri, &mut transcript) {
+    if !fri::verify_in_transcript(&trace_fri_params, &proof.trace_fri, &mut transcript) {
         return false;
     }
 
-    if !fri::verify_with_domain(&fri_params, &proof.fri, &mut transcript) {
+    if !fri::verify_in_transcript(&fri_params, &proof.fri, &mut transcript) {
         return false;
     }
 
@@ -1052,11 +1052,22 @@ fn zk_shape_is_structural(air: &Air, params: &ZkParams) -> bool {
         return false;
     }
     let size = 1usize << log_size;
-    let trace_bound = (n + params.blind).next_power_of_two();
-    let comp_bound = (air.max_degree() * (n + params.blind)).next_power_of_two();
-    if trace_bound == 0 || comp_bound == 0 {
-        return false;
-    }
+    let span = match n.checked_add(params.blind) {
+        Some(span) => span,
+        None => return false,
+    };
+    let trace_bound = match span.checked_next_power_of_two() {
+        Some(bound) => bound,
+        None => return false,
+    };
+    let comp_bound = match air
+        .max_degree()
+        .checked_mul(span)
+        .and_then(usize::checked_next_power_of_two)
+    {
+        Some(bound) => bound,
+        None => return false,
+    };
     let trace_fri_blowup = size / trace_bound;
     let comp_fri_blowup = size / comp_bound;
     trace_fri_blowup >= 2
