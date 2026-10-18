@@ -18,8 +18,9 @@ const COL_SIGN: usize = 1;
 const COL_MAG: usize = 2;
 const COL_MAG_BITS: usize = 3;
 const COL_MAG_SLACK: usize = COL_MAG_BITS + NORM_BITS;
+const COL_MAG_INV: usize = COL_MAG_SLACK + NORM_BITS;
 
-pub const WIDTH: usize = COL_MAG_SLACK + NORM_BITS;
+pub const WIDTH: usize = COL_MAG_INV + 1;
 
 fn recompose(row: &[Felt], base: usize) -> Felt {
     let two = Felt::new(2);
@@ -38,6 +39,7 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     let z = base + COL_Z;
     let sign = base + COL_SIGN;
     let mag = base + COL_MAG;
+    let mag_inv = base + COL_MAG_INV;
 
     air.add_single_row(2, move |row| {
         let mirror = modulus.sub(row[z].add(row[z]));
@@ -45,6 +47,10 @@ pub fn add_constraints(air: &mut Air, base: usize) {
     });
 
     air.add_single_row(2, move |row| row[sign].mul(row[sign].sub(Felt::ONE)));
+
+    air.add_single_row(3, move |row| {
+        row[sign].mul(Felt::ONE.sub(row[mag].mul(row[mag_inv])))
+    });
 
     air.add_single_row(1, move |row| {
         recompose(row, base + COL_MAG_BITS).sub(row[mag])
@@ -72,6 +78,12 @@ pub fn fill_row(trace: &mut TraceTable, base: usize, row: usize, z: u64) {
     trace.set(base + COL_Z, row, Felt::new(z));
     trace.set(base + COL_SIGN, row, Felt::new(sign));
     trace.set(base + COL_MAG, row, Felt::new(magnitude));
+    let inverse = if magnitude == 0 {
+        Felt::ZERO
+    } else {
+        Felt::new(magnitude).inv()
+    };
+    trace.set(base + COL_MAG_INV, row, inverse);
     let slack = (NORM_BOUND - 1).wrapping_sub(magnitude);
     for k in 0..NORM_BITS {
         trace.set(
@@ -135,11 +147,28 @@ mod tests {
 
     #[test]
     fn a_coefficient_written_at_or_above_the_modulus_is_rejected() {
+        let modulus = Felt::new(Q);
         for raw in [Q, Q + 5, Q + NORM_BOUND - 1] {
             for sign in [0u64, 1] {
                 let mut batch = norm_batch(&[5]);
-                batch.trace.set(COL_Z, 0, Felt::new(raw));
-                batch.trace.set(COL_SIGN, 0, Felt::new(sign));
+                let z = Felt::new(raw);
+                let s = Felt::new(sign);
+                let mag = z.add(s.mul(modulus.sub(z.add(z))));
+                let mag_u = mag.to_u64();
+                let slack = (NORM_BOUND - 1).wrapping_sub(mag_u);
+                batch.trace.set(COL_Z, 0, z);
+                batch.trace.set(COL_SIGN, 0, s);
+                batch.trace.set(COL_MAG, 0, mag);
+                for k in 0..NORM_BITS {
+                    batch
+                        .trace
+                        .set(COL_MAG_BITS + k, 0, Felt::new((mag_u >> k) & 1));
+                    batch
+                        .trace
+                        .set(COL_MAG_SLACK + k, 0, Felt::new((slack >> k) & 1));
+                }
+                let inverse = if mag_u == 0 { Felt::ZERO } else { mag.inv() };
+                batch.trace.set(COL_MAG_INV, 0, inverse);
                 assert!(!batch.air.is_satisfied(&batch.trace));
             }
         }
