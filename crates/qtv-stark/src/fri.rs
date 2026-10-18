@@ -360,12 +360,23 @@ pub fn soundness_bits(params: &FriParams) -> f64 {
     params.num_queries as f64 * -((1.0 + rate) / 2.0).log2()
 }
 
+fn field_large_enough<F: FriField>(params: &FriParams) -> bool {
+    let field_bits = 64 * F::LIMBS as u64;
+    let round_bits = u64::from(usize::BITS - params.rounds().max(1).leading_zeros());
+    field_bits as f64
+        >= crate::stark::SOUNDNESS_FLOOR_BITS
+            + f64::from(params.log_domain_size)
+            + round_bits as f64
+}
+
 pub fn verify_with_domain<F: FriField>(
     params: &FriParams,
     proof: &FriProof<F>,
     transcript: &mut Transcript,
 ) -> bool {
-    if soundness_bits(params) < crate::stark::SOUNDNESS_FLOOR_BITS {
+    if soundness_bits(params) < crate::stark::SOUNDNESS_FLOOR_BITS
+        || !field_large_enough::<F>(params)
+    {
         return false;
     }
     verify_in_transcript(params, proof, transcript)
@@ -618,9 +629,14 @@ mod tests {
         let coeffs: Vec<Felt> = (0..params.degree_bound() as u64)
             .map(|i| Felt::new(i.wrapping_mul(2654435769) ^ 81))
             .collect();
-        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let evals: Vec<Fp3> = eval_domain(&coeffs, params.log_domain_size)
+            .into_iter()
+            .map(Fp3::from_base)
+            .collect();
         let proof = prove(&evals, &params);
         assert!(verify(&params, &proof));
+        let base = prove(&eval_domain(&coeffs, params.log_domain_size), &params);
+        assert!(!verify(&params, &base));
     }
 
     #[test]
@@ -712,7 +728,10 @@ mod tests {
     fn a_low_degree_proof_under_one_context_is_rejected_under_another() {
         let params = sample_params();
         let coeffs: Vec<Felt> = (0..params.degree_bound() as u64).map(Felt::new).collect();
-        let evals = eval_domain(&coeffs, params.log_domain_size);
+        let evals: Vec<Fp3> = eval_domain(&coeffs, params.log_domain_size)
+            .into_iter()
+            .map(Fp3::from_base)
+            .collect();
         let proof = prove_with_domain(
             &evals,
             &params,

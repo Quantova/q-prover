@@ -40,8 +40,8 @@ fn main() {
     }
     let instance = qudros_trace(&input);
     let params = StarkParams {
-        lde_blowup: 32,
-        num_queries: 32,
+        lde_blowup: 128,
+        num_queries: 155,
     };
 
     let prove_iters = 3;
@@ -56,6 +56,10 @@ fn main() {
     let air = qudros_air(&input, &instance.output);
     let start = Instant::now();
     let mut accepted = verify(&air, &params, &proof);
+    assert!(
+        accepted,
+        "the benchmark proof must verify under the soundness floor"
+    );
     for _ in 1..verify_iters {
         accepted = verify(&air, &params, &proof);
     }

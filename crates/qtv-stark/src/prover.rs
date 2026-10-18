@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::field::Felt;
+use crate::field_ext::Fp3;
 use crate::fri::{prove as fri_prove, FriParams};
 
-pub type Proof = crate::fri::FriProof<Felt>;
+pub type Proof = crate::fri::FriProof<Fp3>;
 
 pub struct PublicInputs {
     pub params: FriParams,
@@ -22,7 +23,8 @@ pub struct LowDegreeProver;
 
 impl Prover for LowDegreeProver {
     fn prove(&self, public: &PublicInputs, witness: &Witness) -> Proof {
-        fri_prove(&witness.trace, &public.params)
+        let lifted: Vec<Fp3> = witness.trace.iter().map(|&v| Fp3::from_base(v)).collect();
+        fri_prove(&lifted, &public.params)
     }
 }
 

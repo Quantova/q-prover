@@ -4,6 +4,7 @@
 use std::time::Instant;
 
 use qtv_stark::field::{root_of_unity, Felt};
+use qtv_stark::field_ext::Fp3;
 use qtv_stark::fri::{prove, verify, FriParams};
 
 fn eval_poly(coeffs: &[Felt], point: Felt) -> Felt {
@@ -26,13 +27,13 @@ fn eval_domain(coeffs: &[Felt], log_n: u32) -> Vec<Felt> {
     out
 }
 
-fn proof_bytes(proof: &qtv_stark::fri::FriProof<Felt>) -> usize {
+fn proof_bytes(proof: &qtv_stark::fri::FriProof<Fp3>) -> usize {
     let mut total = proof.layer_roots.len() * 32;
-    total += proof.final_layer.len() * 8;
+    total += proof.final_layer.len() * 24;
     for query in &proof.queries {
         total += 8;
         for layer in &query.layers {
-            total += 16;
+            total += 48;
             total += (layer.eval_path.siblings.len() + layer.sibling_path.siblings.len()) * 32;
         }
     }
@@ -42,7 +43,7 @@ fn proof_bytes(proof: &qtv_stark::fri::FriProof<Felt>) -> usize {
 fn main() {
     let params = FriParams {
         log_domain_size: 16,
-        num_queries: 32,
+        num_queries: 160,
         blowup: 8,
     };
 
@@ -50,7 +51,10 @@ fn main() {
     let coeffs: Vec<Felt> = (0..degree)
         .map(|i| Felt::new((i as u64).wrapping_mul(11400714819323198485) ^ 305419896))
         .collect();
-    let evals = eval_domain(&coeffs, params.log_domain_size);
+    let evals: Vec<Fp3> = eval_domain(&coeffs, params.log_domain_size)
+        .into_iter()
+        .map(Fp3::from_base)
+        .collect();
 
     let prove_iters = 20;
     let start = Instant::now();
@@ -63,6 +67,10 @@ fn main() {
     let verify_iters = 200;
     let start = Instant::now();
     let mut accepted = verify(&params, &proof);
+    assert!(
+        accepted,
+        "the benchmark proof must verify under the soundness floor"
+    );
     for _ in 1..verify_iters {
         accepted = verify(&params, &proof);
     }

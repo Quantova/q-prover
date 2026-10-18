@@ -89,8 +89,8 @@ where
 fn main() {
     let signatures = 4;
     let params = StarkParams {
-        lde_blowup: 8,
-        num_queries: 32,
+        lde_blowup: 128,
+        num_queries: 155,
     };
 
     let modmul_work = signature_batch_workload(signatures, 24301);

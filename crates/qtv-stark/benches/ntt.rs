@@ -39,8 +39,8 @@ fn main() {
         .collect();
     let instance = ntt_trace(&to_layer_zero(&coeffs));
     let params = StarkParams {
-        lde_blowup: 8,
-        num_queries: 32,
+        lde_blowup: 128,
+        num_queries: 155,
     };
 
     let prove_iters = 5;
@@ -54,6 +54,10 @@ fn main() {
     let verify_iters = 50;
     let start = Instant::now();
     let mut accepted = verify(&instance.air, &params, &proof);
+    assert!(
+        accepted,
+        "the benchmark proof must verify under the soundness floor"
+    );
     for _ in 1..verify_iters {
         accepted = verify(&instance.air, &params, &proof);
     }

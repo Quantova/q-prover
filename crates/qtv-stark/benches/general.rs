@@ -35,8 +35,8 @@ fn proof_bytes(proof: &StarkProof) -> usize {
 fn main() {
     let log_length = 12;
     let params = StarkParams {
-        lde_blowup: 8,
-        num_queries: 32,
+        lde_blowup: 128,
+        num_queries: 155,
     };
     let chain = squaring_chain(log_length, Felt::new(3));
 
@@ -51,6 +51,10 @@ fn main() {
     let verify_iters = 200;
     let start = Instant::now();
     let mut accepted = verify(&chain.air, &params, &proof);
+    assert!(
+        accepted,
+        "the benchmark proof must verify under the soundness floor"
+    );
     for _ in 1..verify_iters {
         accepted = verify(&chain.air, &params, &proof);
     }
