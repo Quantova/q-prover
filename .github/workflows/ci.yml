@@ -5,6 +5,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   ci:
     uses: Quantova/Quantova-Ci/.github/workflows/rust-ci.yml@d945b9ed017de20a327f6103579dc1a416f46f70
