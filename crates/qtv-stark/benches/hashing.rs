@@ -6,7 +6,7 @@ use std::time::Instant;
 use qtv_stark::hashing::{
     challenge_hash, matrix_entries, matrix_entry_hash, matrix_entry_perms, MU_BYTES,
 };
-use qtv_stark::stark::{prove, verify, StarkParams, StarkProof};
+use qtv_stark::stark::{min_queries, prove, verify, StarkParams, StarkProof};
 
 fn merkle_bytes(proof: &qtv_stark::merkle::MerkleProof) -> usize {
     8 + proof.siblings.len() * 32
@@ -50,6 +50,11 @@ where
     let instance = build();
     let prove_iters = 3;
     let start = Instant::now();
+    let params = &StarkParams {
+        lde_blowup: params.lde_blowup,
+        num_queries: min_queries(instance.air.max_degree(), params.lde_blowup)
+            .expect("a query count meets the floor at this blow up"),
+    };
     let mut proof = prove(&instance.air, &instance.trace, params);
     for _ in 1..prove_iters {
         proof = prove(&instance.air, &instance.trace, params);

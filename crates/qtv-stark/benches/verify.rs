@@ -9,7 +9,7 @@ use qtv_stark::lattice::{
     modmul_batch, signature_batch_workload, MATRIX_COLS, MATRIX_ROWS, Q, RING_DEGREE,
 };
 use qtv_stark::norm::norm_batch;
-use qtv_stark::stark::{prove, verify, StarkParams, StarkProof};
+use qtv_stark::stark::{min_queries, prove, verify, StarkParams, StarkProof};
 
 fn merkle_bytes(proof: &qtv_stark::merkle::MerkleProof) -> usize {
     8 + proof.siblings.len() * 32
@@ -64,6 +64,11 @@ where
     A: Fn() -> qtv_stark::air::Air,
 {
     let start = Instant::now();
+    let params = &StarkParams {
+        lde_blowup: params.lde_blowup,
+        num_queries: min_queries(air.max_degree(), params.lde_blowup)
+            .expect("a query count meets the floor at this blow up"),
+    };
     let proof = prove(air, trace, params);
     let prove = start.elapsed();
 

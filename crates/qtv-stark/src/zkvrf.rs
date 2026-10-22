@@ -32,11 +32,11 @@ const CARRIER_OFF: usize = INSEL_COL + 1;
 
 const BASE_WIDTH: usize = CARRIER_OFF + SK_ELEMS;
 
-pub const VRF_BLOWUP: usize = 2048;
+pub const VRF_BLOWUP: usize = 8192;
 
-pub const VRF_QUERIES: usize = 155;
+pub const VRF_QUERIES: usize = 157;
 
-pub const VRF_BLIND: usize = 930;
+pub const VRF_BLIND: usize = 2048;
 
 fn active_round(global: usize) -> Option<usize> {
     if global < ROUNDS {

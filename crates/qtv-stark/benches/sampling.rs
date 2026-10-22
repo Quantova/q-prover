@@ -7,7 +7,7 @@ use qtv_crypto::sha3::{shake128, shake256};
 use qtv_stark::challenge_ball::{ball_air, ball_batch, BALL_BUFFER_BYTES};
 use qtv_stark::encode::{encode_air, encode_batch};
 use qtv_stark::sample::{rej_air, rej_batch, REJ_BUFFER_BYTES};
-use qtv_stark::stark::{prove, verify, StarkParams, StarkProof};
+use qtv_stark::stark::{min_queries, prove, verify, StarkParams, StarkProof};
 
 fn merkle_bytes(proof: &qtv_stark::merkle::MerkleProof) -> usize {
     8 + proof.siblings.len() * 32
@@ -43,6 +43,11 @@ fn report(
 ) {
     let prove_iters = 5;
     let start = Instant::now();
+    let params = &StarkParams {
+        lde_blowup: params.lde_blowup,
+        num_queries: min_queries(air.max_degree(), params.lde_blowup)
+            .expect("a query count meets the floor at this blow up"),
+    };
     let mut proof = prove(air, trace, params);
     for _ in 1..prove_iters {
         proof = prove(air, trace, params);

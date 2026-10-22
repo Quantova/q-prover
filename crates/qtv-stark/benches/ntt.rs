@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use qtv_stark::lattice::Q;
 use qtv_stark::ntt::{ntt_trace, to_layer_zero};
-use qtv_stark::stark::{prove, verify, StarkParams, StarkProof};
+use qtv_stark::stark::{min_queries, prove, verify, StarkParams, StarkProof};
 
 fn merkle_bytes(proof: &qtv_stark::merkle::MerkleProof) -> usize {
     8 + proof.siblings.len() * 32
@@ -45,21 +45,26 @@ fn main() {
 
     let prove_iters = 5;
     let start = Instant::now();
-    let mut proof = prove(&instance.air, &instance.trace, &params);
+    let params = &StarkParams {
+        lde_blowup: params.lde_blowup,
+        num_queries: min_queries(instance.air.max_degree(), params.lde_blowup)
+            .expect("a query count meets the floor at this blow up"),
+    };
+    let mut proof = prove(&instance.air, &instance.trace, params);
     for _ in 1..prove_iters {
-        proof = prove(&instance.air, &instance.trace, &params);
+        proof = prove(&instance.air, &instance.trace, params);
     }
     let prove_time = start.elapsed() / prove_iters;
 
     let verify_iters = 50;
     let start = Instant::now();
-    let mut accepted = verify(&instance.air, &params, &proof);
+    let mut accepted = verify(&instance.air, params, &proof);
     assert!(
         accepted,
         "the benchmark proof must verify under the soundness floor"
     );
     for _ in 1..verify_iters {
-        accepted = verify(&instance.air, &params, &proof);
+        accepted = verify(&instance.air, params, &proof);
     }
     let verify_time = start.elapsed() / verify_iters;
 

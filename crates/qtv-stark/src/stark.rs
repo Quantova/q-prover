@@ -526,8 +526,29 @@ pub fn composition_soundness_bits(max_degree: usize, params: &StarkParams) -> f6
     if fri_blowup < 2 {
         return 0.0;
     }
-    let rate = 1.0 / fri_blowup as f64;
-    params.num_queries as f64 * -((1.0 + rate) / 2.0).log2()
+    query_bits(
+        params.num_queries,
+        (factor + 1) as f64 / params.lde_blowup as f64,
+    )
+}
+
+pub fn min_queries(max_degree: usize, lde_blowup: usize) -> Option<usize> {
+    (MIN_QUERIES..=4096).find(|&num_queries| {
+        composition_soundness_bits(
+            max_degree,
+            &StarkParams {
+                lde_blowup,
+                num_queries,
+            },
+        ) >= SOUNDNESS_FLOOR_BITS
+    })
+}
+
+fn query_bits(num_queries: usize, agreement: f64) -> f64 {
+    if !(0.0..1.0).contains(&agreement) {
+        return 0.0;
+    }
+    num_queries as f64 * -((1.0 + agreement) / 2.0).log2()
 }
 
 fn proof_shape_is_structural(
@@ -1023,6 +1044,10 @@ pub fn prove_zk(
         0,
         "the blinded path does not carry aux columns"
     );
+    assert!(
+        zk_shape_is_structural(air, params),
+        "the blinding does not cover every opening this proof reveals"
+    );
     let (domain, trace_fri_blowup) = Domain::new_blinded(air, params.lde_blowup, params.blind);
     let base_lde = blinded_columns(trace, &domain, params.blind, seed, 0);
     let mask = masking_columns(&domain, trace_fri_blowup, seed);
@@ -1074,6 +1099,17 @@ fn zk_shape_is_structural(air: &Air, params: &ZkParams) -> bool {
         && trace_fri_blowup.is_power_of_two()
         && comp_fri_blowup >= 2
         && comp_fri_blowup.is_power_of_two()
+        && params.blind >= ROW_OPENINGS_PER_QUERY * params.num_queries
+        && mask_covers_fri(trace_bound, size, params.num_queries)
+        && mask_covers_fri(comp_bound, size, params.num_queries)
+}
+
+const ROW_OPENINGS_PER_QUERY: usize = 6;
+
+fn mask_covers_fri(degree_bound: usize, size: usize, num_queries: usize) -> bool {
+    let rounds = degree_bound.trailing_zeros() as usize;
+    let revealed = 2 * rounds * num_queries + size / degree_bound;
+    degree_bound >= revealed
 }
 
 pub fn zk_soundness_bits(air: &Air, params: &ZkParams) -> f64 {
@@ -1081,9 +1117,9 @@ pub fn zk_soundness_bits(air: &Air, params: &ZkParams) -> f64 {
         return 0.0;
     }
     let size = 1usize << (air.length().trailing_zeros() + params.lde_blowup.trailing_zeros());
-    let comp_bound = (air.max_degree() * (air.length() + params.blind)).next_power_of_two();
-    let rate = 1.0 / (size / comp_bound) as f64;
-    params.num_queries as f64 * -((1.0 + rate) / 2.0).log2()
+    let span = air.length() + params.blind;
+    let comp_bound = (air.max_degree() * span).next_power_of_two();
+    query_bits(params.num_queries, (comp_bound + span) as f64 / size as f64)
 }
 
 pub fn verify_zk(air: &Air, params: &ZkParams, proof: &StarkProof, context: &[u8]) -> bool {
