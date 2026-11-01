@@ -107,6 +107,9 @@ pub const PROTOCOL_TAG: &[u8] = b"QTV-STARK/v2";
 
 pub const MIN_QUERIES: usize = 16;
 
+const ABSORB_TAG: u8 = 0x00;
+const SQUEEZE_TAG: u8 = 0x01;
+
 pub struct Transcript {
     state: Digest,
 }
@@ -125,8 +128,9 @@ impl Transcript {
     }
 
     pub fn absorb(&mut self, bytes: &[u8]) {
-        let mut preimage = Vec::with_capacity(32 + bytes.len());
+        let mut preimage = Vec::with_capacity(33 + bytes.len());
         preimage.extend_from_slice(&self.state);
+        preimage.push(ABSORB_TAG);
         preimage.extend_from_slice(bytes);
         self.state = sha3_256(&preimage);
     }
@@ -148,9 +152,10 @@ impl Transcript {
     }
 
     fn squeeze(&mut self, domain: u8) -> Digest {
-        let mut preimage = [0u8; 33];
+        let mut preimage = [0u8; 34];
         preimage[..32].copy_from_slice(&self.state);
-        preimage[32] = domain;
+        preimage[32] = SQUEEZE_TAG;
+        preimage[33] = domain;
         let out = sha3_256(&preimage);
         self.state = out;
         out
